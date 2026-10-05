@@ -1,0 +1,54 @@
+{
+  "0000000a-0000-0000-0000-000000000001": [
+    200,
+    {
+      "id": "0000000a-0000-0000-0000-000000000001",
+      "displayName": "User One",
+      "userPrincipalName": "user.one@contoso.example",
+      "userType": "Member"
+    }
+  ],
+  "0000000a-0000-0000-0000-000000000002": [
+    200,
+    {
+      "id": "0000000a-0000-0000-0000-000000000002",
+      "displayName": "Guest Two",
+      "userPrincipalName": "guest.two_partner.example#EXT#@contoso.onmicrosoft.com",
+      "userType": "Guest"
+    }
+  ],
+  "0000000b-0000-0000-0000-000000000001": [
+    200,
+    {
+      "id": "0000000b-0000-0000-0000-000000000001",
+      "displayName": "grp-platform-admins"
+    }
+  ],
+  "0000000c-0000-0000-0000-000000000001": [
+    200,
+    {
+      "id": "0000000c-0000-0000-0000-000000000001",
+      "displayName": "sp-pipeline",
+      "appId": "99999999-9999-9999-9999-999999999991",
+      "servicePrincipalType": "Application"
+    }
+  ],
+  "0000000c-0000-0000-0000-000000000002": [
+    200,
+    {
+      "id": "0000000c-0000-0000-0000-000000000002",
+      "displayName": "mi-app",
+      "appId": "99999999-9999-9999-9999-999999999992",
+      "servicePrincipalType": "ManagedIdentity"
+    }
+  ],
+  "0000000d-0000-0000-0000-000000000001": [
+    404,
+    {
+      "error": {
+        "code": "Request_ResourceNotFound",
+        "message": "Resource does not exist."
+      }
+    }
+  ]
+}

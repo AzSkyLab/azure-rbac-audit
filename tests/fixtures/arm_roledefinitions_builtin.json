@@ -1,0 +1,58 @@
+{
+  "value": [
+    {
+      "id": "/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+      "name": "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+      "properties": {
+        "roleName": "Owner",
+        "type": "BuiltInRole",
+        "permissions": [
+          {
+            "actions": [
+              "*"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
+      "name": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+      "properties": {
+        "roleName": "Contributor",
+        "type": "BuiltInRole",
+        "permissions": [
+          {
+            "actions": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+      "name": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+      "properties": {
+        "roleName": "Reader",
+        "type": "BuiltInRole",
+        "permissions": [
+          {
+            "actions": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "/providers/Microsoft.Authorization/roleDefinitions/00482a5a-887f-4fb3-b363-3b7fe8e74483",
+      "name": "00482a5a-887f-4fb3-b363-3b7fe8e74483",
+      "properties": {
+        "roleName": "Key Vault Administrator",
+        "type": "BuiltInRole",
+        "permissions": [
+          {
+            "actions": []
+          }
+        ]
+      }
+    }
+  ]
+}

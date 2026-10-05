@@ -1,0 +1,74 @@
+{
+  "value": [
+    {
+      "id": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignmentScheduleInstances/33333333-3333-3333-3333-333333333331",
+      "properties": {
+        "assignmentType": "Assigned",
+        "startDateTime": "2025-06-01T00:00:00Z",
+        "endDateTime": null,
+        "originRoleAssignmentId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/33333333-3333-3333-3333-333333333331",
+        "principalId": "0000000a-0000-0000-0000-000000000001",
+        "principalType": "User",
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+        "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+        "status": "Provisioned"
+      }
+    },
+    {
+      "id": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-app/providers/Microsoft.Authorization/roleAssignmentScheduleInstances/33333333-3333-3333-3333-333333333332",
+      "properties": {
+        "assignmentType": "Activated",
+        "startDateTime": "2025-06-01T00:00:00Z",
+        "endDateTime": "2025-06-01T08:00:00Z",
+        "originRoleAssignmentId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/33333333-3333-3333-3333-333333333332",
+        "principalId": "0000000b-0000-0000-0000-000000000001",
+        "principalType": "Group",
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c",
+        "scope": "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-app",
+        "status": "Provisioned"
+      }
+    },
+    {
+      "id": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignmentScheduleInstances/33333333-3333-3333-3333-333333333333",
+      "properties": {
+        "assignmentType": "Assigned",
+        "startDateTime": "2025-06-01T00:00:00Z",
+        "endDateTime": "2026-01-01T00:00:00Z",
+        "originRoleAssignmentId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/33333333-3333-3333-3333-333333333333",
+        "principalId": "0000000c-0000-0000-0000-000000000001",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+        "scope": "/subscriptions/11111111-1111-1111-1111-111111111111",
+        "status": "Provisioned"
+      }
+    },
+    {
+      "id": "/providers/Microsoft.Management/managementGroups/mg-test/providers/Microsoft.Authorization/roleAssignmentScheduleInstances/33333333-3333-3333-3333-333333333335",
+      "properties": {
+        "assignmentType": "Assigned",
+        "startDateTime": "2025-06-01T00:00:00Z",
+        "endDateTime": null,
+        "originRoleAssignmentId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/33333333-3333-3333-3333-333333333335",
+        "principalId": "0000000a-0000-0000-0000-000000000002",
+        "principalType": "User",
+        "roleDefinitionId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/22222222-2222-2222-2222-222222222221",
+        "scope": "/providers/Microsoft.Management/managementGroups/mg-test",
+        "status": "Provisioned"
+      }
+    },
+    {
+      "id": "/providers/Microsoft.Management/managementGroups/mg-test/providers/Microsoft.Authorization/roleAssignmentScheduleInstances/33333333-3333-3333-3333-333333333338",
+      "properties": {
+        "assignmentType": "Assigned",
+        "startDateTime": "2025-06-01T00:00:00Z",
+        "endDateTime": null,
+        "originRoleAssignmentId": "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleAssignments/33333333-3333-3333-3333-333333333338",
+        "principalId": "0000000b-0000-0000-0000-000000000001",
+        "principalType": "Group",
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+        "scope": "/providers/Microsoft.Management/managementGroups/mg-test",
+        "status": "Provisioned"
+      }
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+# Copy to config.local.yaml (gitignored) and edit. Nothing environment-specific lives in code.
+
+# Entra tenant the audit must run against. The run aborts if the signed-in
+# identity's token is for a different tenant.
+tenant_id: "00000000-0000-0000-0000-000000000000"
+
+scope:
+  # Empty subscriptions AND empty management_groups = every subscription the
+  # signed-in identity can read.
+  subscriptions: []
+  management_groups: []
+  # Also report assignments inherited from management groups / root ("/").
+  include_inherited: true
+  # Query PIM schedules for every resource group too (finds eligible-only
+  # assignments on RGs). Slower on large estates.
+  scan_resource_groups: true
+
+output_dir: evidence
+
+# Control review cadence, recorded in the manifest for the audit trail.
+review_frequency_days: 90
+
+privileged_roles:
+  privileged_admin:
+    - Owner
+    - Contributor
+    - User Access Administrator
+    - Role Based Access Control Administrator
+    - Reservations Administrator
+  sensitive_data_plane:
+    - Key Vault Administrator
+    - Key Vault Secrets Officer
+    - Key Vault Crypto Officer
+    - Key Vault Certificates Officer
+    - Key Vault Data Access Administrator
+    - Storage Blob Data Owner
+    - Virtual Machine Administrator Login
+
+# A custom role is "custom_privileged" if any of its `actions` equals one of
+# these or is a wildcard that covers one of these.
+custom_role_privileged_actions:
+  - "*"
+  - "Microsoft.Authorization/*"
+  - "Microsoft.Authorization/roleAssignments/write"
+  - "Microsoft.Authorization/roleDefinitions/write"

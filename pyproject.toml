@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rbac-audit"
+version = "0.1.0"
+description = "Read-only Azure RBAC audit evidence collector (NIST 800-53 AC / CIS Azure)"
+requires-python = ">=3.11"
+dependencies = ["azure-identity>=1.15", "requests>=2.31", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rbac-audit = "rbac_audit.cli:main"
+
+[tool.setuptools]
+packages = ["rbac_audit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
