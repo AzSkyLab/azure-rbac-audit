@@ -5,10 +5,13 @@
 tenant_id: "00000000-0000-0000-0000-000000000000"
 
 scope:
+  # RECOMMENDED: the tenant root management group (its id equals the tenant id)
+  # so every subscription and management group is covered, including inherited
+  # assignments. Descendant management groups are enumerated automatically.
   # Empty subscriptions AND empty management_groups = every subscription the
-  # signed-in identity can read.
+  # signed-in identity can read (misses management-group-only assignments).
   subscriptions: []
-  management_groups: []
+  management_groups: []   # e.g. ["<tenant-id>"]
   # Also report assignments inherited from management groups / root ("/").
   include_inherited: true
   # Query PIM schedules for every resource group too (finds eligible-only
@@ -51,3 +54,8 @@ custom_role_sensitive_data_actions:
   - "Microsoft.KeyVault/vaults/secrets/*"
   - "Microsoft.KeyVault/vaults/keys/*"
   - "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*"
+
+# Phase 2: privileged groups, PIM for Groups membership and access reviews (Microsoft Graph).
+entra:
+  enabled: true
+  max_group_depth: 10     # nested-group expansion depth

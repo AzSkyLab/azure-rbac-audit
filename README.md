@@ -19,6 +19,11 @@ Each run writes `evidence/<UTC timestamp>/`:
 | `assignments.csv` | full inventory: principal type, PIM label, privilege tier, scope level, severity, direct-user result |
 | `exceptions_direct_user.csv` | active or eligible assignments held directly by a User / Guest user (header only when compliant) |
 | `exceptions_privileged_permanent.csv` | privileged tier + `permanent_active` |
+| `privileged_groups.csv` | groups computed as privileged (Azure role / Entra directory role / PIM for Groups) with reasons |
+| `group_members.csv` | members and owners of each privileged group, nested groups expanded, labelled `eligible_member` / `activated_member` / `time_bound_member` / `permanent_member` / `owner` (`unverified_member` if PIM for Groups could not be read) |
+| `exceptions_privileged_group_standing.csv` | users who are permanent (non-PIM) members/owners of a privileged group |
+| `access_reviews.csv`, `access_review_decisions.csv` | covering access reviews per privileged group and their decisions |
+| `exceptions_access_review.csv` | one row per group per reason: `no_review`, `frequency_too_low`, `overdue`, `not_completed`, `decisions_not_applied`, `denied_still_member`, `self_review`, `default_approve`, or `coverage_gap` when review data could not be read |
 | `manifest.json` | status (`complete`/`failed`), run time, signed-in identity, tenant, scopes, tool version, call log, warnings, coverage, SHA-256 of every file |
 | `manifest.sha256` | `sha256sum`-format digest of `manifest.json` (also printed at the end of the run; record it out-of-band) |
 
@@ -45,3 +50,37 @@ at the scope). Principals Graph denies are reported as `unresolved`, never `Orph
 - Custom roles are tiered on `actions` (-> `custom_privileged`) and `dataActions` (-> `sensitive_data_plane`, patterns in
   `custom_role_sensitive_data_actions`). `notActions` / `notDataActions` are not subtracted (conservative).
 - CSV cells starting with `= + - @ TAB CR` are prefixed with `'` to prevent spreadsheet formula injection; `raw/` is untouched.
+
+## Phase 2: privileged groups, PIM for Groups, access reviews
+
+Privileged groups are *computed*: any Group holding (active or eligible) a non-standard-tier Azure role, any group holding or
+eligible for an Entra directory role with `isPrivileged = true` (beta `roleDefinitions`), plus groups found to be PIM-for-Groups
+managed while expanding those. Membership is walked via `/groups/{id}/members` (nested groups expanded, cycle-safe, path
+recorded) merged with PIM for Groups `assignmentScheduleInstances` / `eligibilityScheduleInstances`; nested chains take the
+weakest link (a permanent member of a group that is only *eligible* in the privileged group is `eligible_member`).
+
+Access reviews (`identityGovernance/accessReviews`) cover a group if the definition scope or an instance scope names the group
+(membership or PIM for Groups review) or an Azure role review's scope path is a prefix of a scope where the group holds a role
+(a `principalType eq 'User'` filter excludes groups). Frequency uses `review_frequency_days` (monthly = 30 days, so quarterly = 90).
+
+**Delegated Graph permissions needed (all read-only):** `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup`
+(covers both group PIM schedule APIs), `AccessReview.Read.All`, plus directory read for groups/users (`GroupMember.Read.All` /
+`Directory.Read.All`). The Azure CLI token does **not** carry the first three; any 403 is recorded as a coverage gap
+(`coverage_gaps_by_area`, `missing_graph_permissions`), exceptions that depend on it are `unverified`/`coverage_gap`, never a pass.
+
+### Minimal lab setup to exercise each path live
+
+1. *Group PIM labels:* make a security group `lab-priv` hold Contributor on a resource group (so it is privileged); in Entra PIM >
+   Groups > Discover groups > Make managed. Add user A as **eligible** member, user B as **permanent active** member (should hit
+   `exceptions_privileged_group_standing`), user C as **time-bound active** (7 days), have A **activate**, add a permanent **owner**,
+   and nest group `lab-nested` (with user D permanent) as an eligible member of `lab-priv`.
+2. *Entra role path (already in the lab):* a role-assignable group holding a privileged directory role (e.g. Application
+   Administrator), and one holding a non-privileged role (e.g. Directory Readers) to show it is excluded; make a group *eligible*
+   for a privileged role to exercise the eligibility API.
+3. *Access reviews (needs the P2/Governance licence):* (a) quarterly membership review of `lab-priv`, reviewer = an owner who is not a
+   member, auto-apply on; complete one instance denying a user, check the user is removed (otherwise `denied_still_member`);
+   (b) a second review of a different group with *default decision = Approve* and reviewers = *members (self review)* with a yearly
+   recurrence (`default_approve`, `self_review`, `frequency_too_low`); (c) a one-day review left unreviewed for >1 day (`overdue`);
+   (d) a PIM for Groups review and (e) an Azure resource role review (PIM > Azure resources > Access reviews) at the subscription;
+   leave one privileged group with no review (`no_review`).
+4. *Token:* run with credentials that carry the three permissions above (e.g. a delegated sign-in with those scopes consented).

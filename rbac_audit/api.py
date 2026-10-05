@@ -148,6 +148,13 @@ class AzureApi:
         status, data = self._send("arm_roledefinition", "GET", url)
         return data if status == 200 else None
 
+    def graph_list(self, category: str, path: str) -> tuple[list[dict] | None, str | None]:
+        """GET a Microsoft Graph collection (all pages). Returns (items, None) or (None, error text)."""
+        try:
+            return self._paged(category, f"{GRAPH}{path}"), None
+        except ApiError as e:
+            return None, str(e)
+
     def pim_instances(self, kind: str, scope: str) -> tuple[list[dict] | None, str | None]:
         """Schedule instances at-and-above `scope`. Returns (items, None) or (None, error)."""
         url = f"{ARM}{scope.rstrip('/')}/providers/Microsoft.Authorization/{PIM_KINDS[kind]}?api-version={PIM_API}"
@@ -209,6 +216,6 @@ class ApiError(RuntimeError):
         msg = ""
         if isinstance(body, dict):
             err = body.get("error") or {}
-            msg = f"{err.get('code', '')}: {err.get('message', '')}"[:300]
+            msg = f"{err.get('code', '')}: {err.get('message', '')}"[:600]
         super().__init__(f"HTTP {status} {urlparse(url).path} {msg}".strip())
         self.status = status

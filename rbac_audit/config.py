@@ -34,6 +34,8 @@ class Config:
     sensitive_data_plane_roles: tuple[str, ...]
     custom_role_privileged_actions: tuple[str, ...]
     custom_role_sensitive_data_actions: tuple[str, ...]
+    entra_enabled: bool = True
+    group_max_depth: int = 10
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -48,6 +50,8 @@ class Config:
             "sensitive_data_plane_roles": list(self.sensitive_data_plane_roles),
             "custom_role_privileged_actions": list(self.custom_role_privileged_actions),
             "custom_role_sensitive_data_actions": list(self.custom_role_sensitive_data_actions),
+            "entra_enabled": self.entra_enabled,
+            "group_max_depth": self.group_max_depth,
         }
 
 
@@ -82,6 +86,10 @@ def parse_config(raw: dict) -> Config:
     if not (admin and custom):
         raise ConfigError("privileged_roles.privileged_admin and custom_role_privileged_actions must be set "
                           "(see config.example.yaml); empty lists would classify everything as standard")
+    entra = raw.get("entra") or {}
+    depth = entra.get("max_group_depth", 10)
+    if not isinstance(depth, int) or depth < 1:
+        raise ConfigError("entra.max_group_depth must be a positive integer")
     return Config(
         tenant_id=tenant.lower(),
         subscriptions=tuple(s.lower() for s in subs),
@@ -94,6 +102,8 @@ def parse_config(raw: dict) -> Config:
         sensitive_data_plane_roles=data_plane,
         custom_role_privileged_actions=custom,
         custom_role_sensitive_data_actions=data_actions,
+        entra_enabled=bool(entra.get("enabled", True)),
+        group_max_depth=depth,
     )
 
 

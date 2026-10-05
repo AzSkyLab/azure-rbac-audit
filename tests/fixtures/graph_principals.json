@@ -50,5 +50,21 @@
         "message": "Resource does not exist."
       }
     }
+  ],
+  "0000000b-0000-0000-0000-000000000002": [
+    200,
+    {
+      "id": "0000000b-0000-0000-0000-000000000002",
+      "displayName": "grp-role-assignable",
+      "@odata.type": "#microsoft.graph.group"
+    }
+  ],
+  "0000000b-0000-0000-0000-000000000003": [
+    200,
+    {
+      "id": "0000000b-0000-0000-0000-000000000003",
+      "displayName": "grp-eligible-ga",
+      "@odata.type": "#microsoft.graph.group"
+    }
   ]
 }

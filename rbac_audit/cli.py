@@ -47,9 +47,17 @@ def summarize(result: RunResult) -> tuple[list[str], list[str]]:
     out = [f"evidence written to {result.run_dir}", json.dumps(info["summary"], indent=2),
            f"manifest sha256: {result.manifest_sha256}"]
     err = [f"WARNING: {w}" for w in info["warnings"]]
-    if not info["summary"]["coverage_complete"]:
+    s = info["summary"]
+    areas = s.get("coverage_gaps_by_area", {})
+    if areas.get("azure_rbac") or not s["coverage_complete"] and not areas:
         err.append("WARNING: COVERAGE INCOMPLETE - the direct-user control result (and exception lists) are "
                    "NOT conclusive. See coverage_gaps in manifest.json.")
+    p2_areas = sorted(a for a in areas if a != "azure_rbac")
+    if p2_areas:
+        err.append("WARNING: PHASE 2 COVERAGE INCOMPLETE (" + ", ".join(p2_areas) + ") - privileged-group, group-membership and "
+                   "access-review results are NOT conclusive; gaps are never reported as passes.")
+    if s.get("missing_graph_permissions"):
+        err.append("WARNING: missing Graph permissions on the signed-in token: " + ", ".join(s["missing_graph_permissions"]))
     return out, [line for line in err if line]
 
 

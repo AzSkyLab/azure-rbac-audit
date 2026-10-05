@@ -11,61 +11,7 @@ from rbac_audit.inventory import COLUMNS
 from rbac_audit.manifest import verify_manifest
 import pytest
 from conftest import SUB, fixture
-
-
-class FakeApi:
-    def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None):
-        self.raw = raw
-        self.graph = graph or fixture("graph_principals.json")
-        self.pim_errors = set(pim_errors)  # {(kind, scope)}
-        self.descendants = descendants or []
-        self.descendants_error = descendants_error
-        self.pim_queried: list[tuple[str, str]] = []
-
-    def _rec(self, category, payload, url="fake://"):
-        self.raw.save_json(category, payload, method="GET", url=url, status=200)
-
-    def list_subscriptions(self):
-        return [{"subscriptionId": SUB, "state": "Enabled"}]
-
-    def list_management_groups(self):
-        return [{"id": "/providers/Microsoft.Management/managementGroups/mg-test"}]
-
-    def arg_query(self, category, query, **kw):
-        data = {"arg_roleassignments": fixture("arg_roleassignments.json")["data"],
-                "arg_roledefinitions": fixture("arg_roledefinitions.json")["data"],
-                "arg_resourcecontainers": [{"id": f"/subscriptions/{SUB}"}, {"id": f"/subscriptions/{SUB}/resourceGroups/rg-app"}]}[category]
-        self._rec(category, {"data": data})
-        return data
-
-    def list_builtin_roledefs(self):
-        v = fixture("arm_roledefinitions_builtin.json")["value"]
-        self._rec("arm_roledefinitions_builtin", {"value": v})
-        return v
-
-    def get_roledef(self, scope, guid):
-        return None
-
-    def list_mg_descendants(self, mg):
-        if self.descendants_error:
-            raise RuntimeError(self.descendants_error)
-        return self.descendants
-
-    def pim_instances(self, kind, scope):
-        self.pim_queried.append((kind, scope))
-        if (kind, scope) in self.pim_errors:
-            return None, "HTTP 403 AuthorizationFailed"
-        v = fixture("pim_active.json" if kind == "active" else "pim_eligible.json")["value"]
-        self._rec(f"pim_{kind}", {"value": v})
-        return v, None  # every scope returns everything: exercises de-duplication
-
-    def graph_batch(self, paths):
-        out = {pid: tuple(self.graph[pid]) for pid in paths}
-        self._rec("graph_batch", {"responses": list(paths)})
-        return out
-
-    def parallel(self, fn, args, workers=8):
-        return [fn(a) for a in args]
+from fakes import FakeApi
 
 
 def run(cfg, tmp_path, api_cls=FakeApi, **kw):

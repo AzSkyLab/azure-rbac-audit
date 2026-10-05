@@ -11,7 +11,10 @@ from .api import AzureApi, RawStore
 from .config import Config
 from .controls import direct_user_exceptions, privileged_permanent_exceptions
 from .inventory import COLUMNS, build_inventory, principal_hints
+from .groups import MEMBER_COLUMNS
 from .manifest import write_manifest
+from .phase2 import GROUP_COLUMNS, Phase2, run_phase2
+from .reviews import DECISION_COLUMNS, EXCEPTION_COLUMNS, REVIEW_COLUMNS
 from .principals import DIRECT_USER_TYPES, Principal, classify_principal, graph_path
 from .roles import RoleDef, parse_roledef
 from .scope import guid_of
@@ -32,10 +35,12 @@ class Gathered:
     scopes: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)  # anything that makes the run's conclusions incomplete
+    gap_areas: dict[str, list[str]] = field(default_factory=dict)
 
-    def gap(self, msg: str) -> None:
+    def gap(self, msg: str, area: str = "azure_rbac") -> None:
         self.warnings.append(msg)
         self.gaps.append(msg)
+        self.gap_areas.setdefault(area, []).append(msg)
 
 
 def _dedupe(items: list[dict], key=lambda i: i["id"].lower()) -> list[dict]:
@@ -143,11 +148,23 @@ def new_run_dir(cfg: Config, now: datetime) -> Path:
     return cfg.output_dir / now.strftime("%Y%m%dT%H%M%SZ")
 
 
+CONTROL_MAPPING = {
+    "AC-2": ["assignments.csv", "exceptions_direct_user.csv"],
+    "AC-6": ["exceptions_privileged_permanent.csv"],
+    "AC-2(j)": ["access_reviews.csv", "access_review_decisions.csv", "exceptions_access_review.csv"],
+    "AC-6(7)": ["privileged_groups.csv", "access_reviews.csv", "exceptions_access_review.csv"],
+    "AC-2(7)": ["privileged_groups.csv", "group_members.csv", "exceptions_privileged_group_standing.csv"],
+}
+
 KNOWN_LIMITATIONS = [
     "Eligible-only PIM assignments at resource scope (below resource group) are not enumerated: the "
     "roleAssignmentScheduleInstances/roleEligibilityScheduleInstances APIs return instances at-and-above the "
     "queried scope only, so resources are not individually queried. Eligible assignments on a resource whose "
     "principal has no active assignment there are therefore not reported.",
+    "Privileged groups are computed from groups that hold a non-standard Azure role or a privileged Entra "
+    "directory role; groups managed by PIM for Groups are added only when found while expanding those (Graph "
+    "offers no v1.0 listing of onboarded groups). Access-review coverage of filtered all-groups reviews is "
+    "matched through each instance's scope query; Azure role reviews match on path prefix only.",
 ]
 
 
@@ -179,11 +196,28 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     g = gather(cfg, api)
     rows, warnings = build_inventory(cfg, g.assignments, g.roles, g.active, g.eligible, g.principals,
                                      g.pim_failed["active"])
+    p2 = Phase2()
+    if cfg.entra_enabled:
+        try:
+            p2 = run_phase2(cfg, api, rows, g.principals, started)
+        except Exception as e:  # noqa: BLE001 - phase 2 must not take phase 1 evidence down with it
+            p2.gaps["phase2"] = [f"phase 2 aborted: {type(e).__name__}: {e}"]
+    else:
+        p2.gaps["phase2"] = ["phase 2 (privileged groups, PIM for Groups, access reviews) disabled by config"]
+    for area, msgs in p2.gaps.items():
+        for m in msgs:
+            g.gap(m, area)
     warnings = g.warnings + warnings
     direct, priv_perm = direct_user_exceptions(rows), privileged_permanent_exceptions(rows)
     write_csv(run_dir / "assignments.csv", COLUMNS, rows)
     write_csv(run_dir / "exceptions_direct_user.csv", COLUMNS, direct)
     write_csv(run_dir / "exceptions_privileged_permanent.csv", COLUMNS, priv_perm)
+    write_csv(run_dir / "privileged_groups.csv", GROUP_COLUMNS, p2.groups)
+    write_csv(run_dir / "group_members.csv", MEMBER_COLUMNS, p2.members)
+    write_csv(run_dir / "exceptions_privileged_group_standing.csv", MEMBER_COLUMNS, p2.standing)
+    write_csv(run_dir / "access_reviews.csv", REVIEW_COLUMNS, p2.reviews)
+    write_csv(run_dir / "access_review_decisions.csv", DECISION_COLUMNS, p2.decisions)
+    write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
 
     summary = {
         "assignments_total": len(rows),
@@ -196,8 +230,19 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_direct_user": len(direct),
         "orphaned_for_review": sum(r["direct_user_result"] == "REVIEW" for r in rows),
         "exceptions_privileged_permanent": len(priv_perm),
+        "privileged_groups": len(p2.groups),
+        "privileged_group_member_rows": len(p2.members),
+        "group_members_by_label": _count(p2.members, "label"),
+        "exceptions_privileged_group_standing": len(p2.standing),
+        "access_reviews_covering": len(p2.reviews),
+        "access_review_decisions": len(p2.decisions),
+        "exceptions_access_review": len(p2.review_exceptions),
+        "exceptions_access_review_by_reason": _count(p2.review_exceptions, "reason"),
         "coverage_complete": not g.gaps,
         "coverage_gaps": g.gaps,
+        "coverage_gaps_by_area": g.gap_areas,
+        "missing_graph_permissions": sorted(p2.missing_permissions),
+        "control_mapping": CONTROL_MAPPING,
         "pim_failed_scopes": {k: sorted(v) for k, v in g.pim_failed.items()},
     }
     info = {**_base_info(cfg, identity, started, raw, "complete"), "scopes": g.scopes, "summary": summary,
