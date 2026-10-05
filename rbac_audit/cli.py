@@ -7,9 +7,9 @@ import sys
 from datetime import datetime, timezone
 
 from . import __version__
-from .api import ApiError, AzureApi, RawStore
+from .api import AzureApi, RawStore
 from .auth import ARM_SCOPE, get_credential, identity_from_claims, token_claims
-from .collect import collect, new_run_dir
+from .collect import CollectionFailed, RunResult, new_run_dir, run_collection
 from .config import ConfigError, load_config
 
 
@@ -29,15 +29,28 @@ def _collect_cmd(args) -> int:
     run_dir = new_run_dir(cfg, started)
     raw = RawStore(run_dir / "raw")
     try:
-        info = collect(cfg, AzureApi(cred, raw), raw, run_dir, identity, started)
-    except ApiError as e:
-        print(f"collection failed: {e}", file=sys.stderr)
+        result = run_collection(cfg, AzureApi(cred, raw), raw, run_dir, identity, started)
+    except CollectionFailed as e:
+        print(f"collection failed: {e}\npartial output sealed as {e.failed_dir} (status=failed; NOT evidence)",
+              file=sys.stderr)
         return 1
-    print(f"evidence written to {run_dir}")
-    print(json.dumps(info["summary"], indent=2))
-    for w in info["warnings"]:
-        print(f"WARNING: {w}", file=sys.stderr)
+    out, err = summarize(result)
+    print("\n".join(out))
+    if err:
+        print("\n".join(err), file=sys.stderr)
     return 0
+
+
+def summarize(result: RunResult) -> tuple[list[str], list[str]]:
+    """(stdout lines, stderr lines) for a finished run."""
+    info = result.info
+    out = [f"evidence written to {result.run_dir}", json.dumps(info["summary"], indent=2),
+           f"manifest sha256: {result.manifest_sha256}"]
+    err = [f"WARNING: {w}" for w in info["warnings"]]
+    if not info["summary"]["coverage_complete"]:
+        err.append("WARNING: COVERAGE INCOMPLETE - the direct-user control result (and exception lists) are "
+                   "NOT conclusive. See coverage_gaps in manifest.json.")
+    return out, [line for line in err if line]
 
 
 def main(argv=None) -> int:

@@ -42,7 +42,7 @@ def _row(*, assignment_id, source, scope, role_def_id, principal_id, roles, prin
         "principal_id": principal_id, "principal_type": pr.type, "principal_name": pr.name,
         "principal_upn_or_appid": pr.upn_or_appid, "principal_resolution": pr.resolution,
         "pim_label": pim_label, "start": start or "", "end": end or "", "created_on": created_on or "",
-        "has_condition": has_condition, "direct_user_result": direct_user_result(pr.type),
+        "has_condition": has_condition, "direct_user_result": direct_user_result(pr.type, pr.resolution),
     }
 
 

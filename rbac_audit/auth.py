@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
+import time
 
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import AzureCliCredential, DefaultAzureCredential
@@ -19,6 +21,24 @@ def get_credential():
         return cli
     except ClientAuthenticationError:
         return DefaultAzureCredential(exclude_interactive_browser_credential=True)
+
+
+class TokenCache:
+    """Thread-safe per-scope token cache; AzureCliCredential would otherwise spawn `az` per request."""
+
+    def __init__(self, credential, skew: int = 300, clock=time.time):
+        self._cred, self._skew, self._clock = credential, skew, clock
+        self._tokens: dict[str, tuple[str, float]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, scope: str) -> str:
+        with self._lock:
+            cached = self._tokens.get(scope)
+            if cached and cached[1] - self._skew > self._clock():
+                return cached[0]
+            tok = self._cred.get_token(scope)
+            self._tokens[scope] = (tok.token, float(tok.expires_on))
+            return tok.token
 
 
 def token_claims(token: str) -> dict:

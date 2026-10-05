@@ -8,11 +8,15 @@ from .roles import STANDARD
 PASS, FAIL, REVIEW = "PASS", "FAIL", "REVIEW"
 
 
-def direct_user_result(principal_type: str) -> str:
-    """Control: no direct user assignments (active or eligible)."""
+def direct_user_result(principal_type: str, resolution: str = "resolved") -> str:
+    """Control: no direct user assignments (active or eligible).
+
+    A principal whose type could not be confirmed (orphaned, or Graph lookup failed) is never a PASS;
+    one already known to be a User/Guest still fails.
+    """
     if principal_type in DIRECT_USER_TYPES:
         return FAIL
-    if principal_type == ORPHANED:
+    if principal_type == ORPHANED or resolution != "resolved":
         return REVIEW
     return PASS
 

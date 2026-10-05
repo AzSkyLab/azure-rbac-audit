@@ -68,3 +68,42 @@ def test_privileged_action_returns_match():
 ])
 def test_severity(tier, level, sev):
     assert severity(tier, level) == sev
+
+
+@pytest.mark.parametrize("data_actions,expected", [
+    (["*"], True),
+    (["Microsoft.KeyVault/vaults/secrets/getSecret/action"], False),   # narrower than the configured pattern
+    (["Microsoft.KeyVault/vaults/secrets/*"], True),
+    (["microsoft.keyvault/vaults/keys/*"], True),
+    (["Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*"], True),
+    (["Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"], False),
+    (["Microsoft.Storage/storageAccounts/queueServices/queues/messages/*"], False),
+    ([], False),
+])
+def test_custom_role_sensitive_data_actions(cfg, data_actions, expected):
+    tier, reason = classify_tier(RoleDef("g", "Custom Data", "CustomRole", (), tuple(data_actions)), cfg)
+    assert (tier == SENSITIVE_DATA_PLANE) is expected
+    if expected:
+        assert "dataAction" in reason and data_actions[0] in reason
+
+
+def test_data_actions_ignored_for_builtin_and_control_plane_wins(cfg):
+    assert classify_tier(RoleDef("g", "Reader", "BuiltInRole", (), ("*",)), cfg)[0] == STANDARD
+    both = RoleDef("g", "Both", "CustomRole", ("Microsoft.Authorization/*",), ("*",))
+    assert classify_tier(both, cfg)[0] == CUSTOM_PRIVILEGED
+
+
+def test_parse_roledef_reads_data_actions():
+    r = parse_roledef({"id": "/x/roleDefinitions/AA", "properties": {"roleName": "n", "type": "CustomRole", "permissions": [
+        {"actions": ["a/b"], "dataActions": ["Microsoft.KeyVault/vaults/secrets/*"]}, {"dataActions": ["d/e"]}]}})
+    assert r.data_actions == ("Microsoft.KeyVault/vaults/secrets/*", "d/e") and r.guid == "aa"
+
+
+def test_sensitive_data_actions_default_when_key_omitted(cfg):
+    import yaml
+    from rbac_audit.config import DEFAULT_SENSITIVE_DATA_ACTIONS, parse_config
+    from conftest import ROOT, TENANT
+    raw = yaml.safe_load((ROOT / "config.example.yaml").read_text())
+    raw["tenant_id"] = TENANT
+    del raw["custom_role_sensitive_data_actions"]
+    assert parse_config(raw).custom_role_sensitive_data_actions == DEFAULT_SENSITIVE_DATA_ACTIONS

@@ -19,13 +19,16 @@ class RoleDef:
     name: str
     role_type: str  # BuiltInRole | CustomRole
     actions: tuple[str, ...] = ()
+    data_actions: tuple[str, ...] = ()
 
 
 def parse_roledef(obj: dict) -> RoleDef:
     """Works for both ARG rows and ARM roleDefinition objects (same `properties` shape)."""
     p = obj.get("properties", {})
     actions = tuple(a for perm in p.get("permissions", []) for a in perm.get("actions", []))
-    return RoleDef(guid_of(obj.get("id") or obj.get("name")), p.get("roleName") or "", p.get("type") or "", actions)
+    data_actions = tuple(a for perm in p.get("permissions", []) for a in perm.get("dataActions", []))
+    return RoleDef(guid_of(obj.get("id") or obj.get("name")), p.get("roleName") or "", p.get("type") or "",
+                   actions, data_actions)
 
 
 def privileged_action(actions, patterns) -> str | None:
@@ -50,6 +53,10 @@ def classify_tier(role: RoleDef | None, cfg: Config) -> tuple[str, str]:
             return CUSTOM_PRIVILEGED, f"custom role action '{hit}'"
     if name in {r.lower() for r in cfg.sensitive_data_plane_roles}:
         return SENSITIVE_DATA_PLANE, f"role '{role.name}' in sensitive_data_plane list"
+    if role.role_type == "CustomRole":
+        hit = privileged_action(role.data_actions, cfg.custom_role_sensitive_data_actions)
+        if hit:
+            return SENSITIVE_DATA_PLANE, f"custom role dataAction '{hit}'"
     return STANDARD, ""
 
 

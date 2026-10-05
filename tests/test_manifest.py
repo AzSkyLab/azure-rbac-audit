@@ -34,3 +34,11 @@ def test_verify_detects_tamper_missing_and_extra(tmp_path):
     (root / "raw" / "a.json").unlink()
     assert verify_manifest(root) == ["assignments.csv", "raw/a.json", "raw/b.json"]
     assert "manifest.json" not in hash_tree(root)
+
+
+def test_manifest_digest_file_matches_sha256sum_format(tmp_path):
+    root = make(tmp_path)
+    digest = write_manifest(root, {})
+    assert (root / "manifest.sha256").read_text() == f"{digest}  manifest.json\n"
+    assert digest == sha256_file(root / "manifest.json") and "manifest.sha256" not in hash_tree(root)
+    assert verify_manifest(root) == []

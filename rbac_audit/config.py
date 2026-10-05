@@ -9,6 +9,12 @@ import yaml
 
 _GUID = re.compile(r"^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", re.I)
 _NIL_GUID = "00000000-0000-0000-0000-000000000000"
+DEFAULT_SENSITIVE_DATA_ACTIONS = (
+    "*",
+    "Microsoft.KeyVault/vaults/secrets/*",
+    "Microsoft.KeyVault/vaults/keys/*",
+    "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*",
+)
 
 
 class ConfigError(ValueError):
@@ -27,6 +33,7 @@ class Config:
     privileged_admin_roles: tuple[str, ...]
     sensitive_data_plane_roles: tuple[str, ...]
     custom_role_privileged_actions: tuple[str, ...]
+    custom_role_sensitive_data_actions: tuple[str, ...]
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -40,6 +47,7 @@ class Config:
             "privileged_admin_roles": list(self.privileged_admin_roles),
             "sensitive_data_plane_roles": list(self.sensitive_data_plane_roles),
             "custom_role_privileged_actions": list(self.custom_role_privileged_actions),
+            "custom_role_sensitive_data_actions": list(self.custom_role_sensitive_data_actions),
         }
 
 
@@ -69,6 +77,8 @@ def parse_config(raw: dict) -> Config:
     admin = _strs(roles.get("privileged_admin"), "privileged_roles.privileged_admin")
     data_plane = _strs(roles.get("sensitive_data_plane"), "privileged_roles.sensitive_data_plane")
     custom = _strs(raw.get("custom_role_privileged_actions"), "custom_role_privileged_actions")
+    data_actions = _strs(raw.get("custom_role_sensitive_data_actions"), "custom_role_sensitive_data_actions") \
+        or DEFAULT_SENSITIVE_DATA_ACTIONS
     if not (admin and custom):
         raise ConfigError("privileged_roles.privileged_admin and custom_role_privileged_actions must be set "
                           "(see config.example.yaml); empty lists would classify everything as standard")
@@ -83,6 +93,7 @@ def parse_config(raw: dict) -> Config:
         privileged_admin_roles=admin,
         sensitive_data_plane_roles=data_plane,
         custom_role_privileged_actions=custom,
+        custom_role_sensitive_data_actions=data_actions,
     )
 
 

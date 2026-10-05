@@ -43,3 +43,11 @@ custom_role_privileged_actions:
   - "Microsoft.Authorization/*"
   - "Microsoft.Authorization/roleAssignments/write"
   - "Microsoft.Authorization/roleDefinitions/write"
+
+# A custom role whose `dataActions` equal or are wildcards covering one of these
+# is classed "sensitive_data_plane". Omit the key to use these defaults.
+custom_role_sensitive_data_actions:
+  - "*"
+  - "Microsoft.KeyVault/vaults/secrets/*"
+  - "Microsoft.KeyVault/vaults/keys/*"
+  - "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*"

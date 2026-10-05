@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote, urlparse
 
@@ -15,7 +16,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .auth import ARM_SCOPE, GRAPH_SCOPE
+from .auth import ARM_SCOPE, GRAPH_SCOPE, TokenCache
 
 ARM = "https://management.azure.com"
 GRAPH = "https://graph.microsoft.com"
@@ -55,8 +56,9 @@ class RawStore:
 
 class AzureApi:
     def __init__(self, credential, raw: RawStore):
-        self.cred = credential
+        self.tokens = TokenCache(credential)
         self.raw = raw
+        self._sleep = time.sleep
         self.session = requests.Session()
         retry = Retry(total=5, backoff_factor=1.0, status_forcelist=(429, 500, 502, 503, 504),
                       allowed_methods=None, respect_retry_after_header=True)
@@ -64,7 +66,7 @@ class AzureApi:
 
     # -- plumbing -------------------------------------------------------
     def token(self, scope: str = ARM_SCOPE) -> str:
-        return self.cred.get_token(scope).token
+        return self.tokens.get(scope)
 
     @staticmethod
     def _check(method: str, url: str, body) -> None:
@@ -131,6 +133,11 @@ class AzureApi:
     def list_management_groups(self) -> list[dict]:
         return self._paged("arm_managementgroups", f"{ARM}/providers/Microsoft.Management/managementGroups?api-version=2021-04-01")
 
+    def list_mg_descendants(self, management_group: str) -> list[dict]:
+        url = (f"{ARM}/providers/Microsoft.Management/managementGroups/{quote(management_group)}"
+               "/descendants?api-version=2021-04-01")
+        return self._paged("arm_mg_descendants", url)
+
     def list_builtin_roledefs(self) -> list[dict]:
         flt = quote("type eq 'BuiltInRole'")
         return self._paged("arm_roledefinitions_builtin",
@@ -150,28 +157,51 @@ class AzureApi:
             return None, str(e)
 
     # -- Microsoft Graph -----------------------------------------------
-    def graph_batch(self, paths: dict[str, str]) -> dict[str, tuple[int, dict | None]]:
-        """GET many Graph paths via $batch (20 per call). Returns id -> (status, body)."""
+    def _batch_chunk(self, chunk: list[tuple[str, str]]) -> dict[str, tuple[int, dict | None, dict]]:
+        """One $batch call. Returns id -> (status, body, headers)."""
+        body = {"requests": [{"id": i, "method": "GET", "url": p} for i, p in chunk]}
+        status, data = self._send("graph_batch", "POST", f"{GRAPH}{GRAPH_BATCH_PATH}", body,
+                                  request_note={"requests": len(chunk)})
+        if status != 200 or data is None:
+            return {i: (status, None, {}) for i, _ in chunk}
+        return {r["id"]: (r["status"], r.get("body"), r.get("headers") or {}) for r in data.get("responses", [])}
+
+    def graph_batch(self, paths: dict[str, str], attempts: int = 3) -> dict[str, tuple[int, dict | None]]:
+        """GET many Graph paths via $batch (20 per call). Sub-requests answered 429/5xx are retried
+        (honouring Retry-After) up to `attempts` times. Returns id -> (status, body)."""
         out: dict[str, tuple[int, dict | None]] = {}
-        items = list(paths.items())
-        chunks = [items[i:i + 20] for i in range(0, len(items), 20)]
-
-        def run(chunk):
-            body = {"requests": [{"id": i, "method": "GET", "url": p} for i, p in chunk]}
-            status, data = self._send("graph_batch", "POST", f"{GRAPH}{GRAPH_BATCH_PATH}", body,
-                                      request_note={"requests": len(chunk)})
-            if status != 200 or data is None:
-                return {i: (status, None) for i, _ in chunk}
-            return {r["id"]: (r["status"], r.get("body")) for r in data.get("responses", [])}
-
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            for part in pool.map(run, chunks):
-                out.update(part)
+        pending = list(paths.items())
+        for attempt in range(1, attempts + 1):
+            chunks = [pending[i:i + 20] for i in range(0, len(pending), 20)]
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(self._batch_chunk, chunks))
+            retry, wait = [], 0.0
+            for part in results:
+                for pid, (status, body, headers) in part.items():
+                    out[pid] = (status, body)
+                    if status == 429 or status >= 500:
+                        retry.append((pid, paths[pid]))
+                        wait = max(wait, _retry_after(headers, attempt))
+            if not retry or attempt == attempts:
+                break
+            self._sleep(wait)
+            pending = retry
         return out
 
     def parallel(self, fn, args, workers: int = 8):
         with ThreadPoolExecutor(max_workers=workers) as pool:
             return list(pool.map(fn, args))
+
+
+def _retry_after(headers: dict, attempt: int) -> float:
+    """Seconds to wait before retrying: Retry-After if given (capped), else exponential backoff."""
+    for k, v in headers.items():
+        if k.lower() == "retry-after":
+            try:
+                return min(float(v), 60.0)
+            except ValueError:
+                break
+    return float(2 ** attempt)
 
 
 class ApiError(RuntimeError):
