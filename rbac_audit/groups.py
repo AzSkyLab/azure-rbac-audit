@@ -31,6 +31,11 @@ def instance_state(inst: dict, eligibility: bool) -> str:
     return TIME_BOUND if inst.get("endDateTime") else PERMANENT
 
 
+def strength(state: str) -> int:
+    """Higher = more standing access (permanent strongest, unverified weakest)."""
+    return _CHAIN_RANK.index(state)
+
+
 def combine_states(chain: list[str]) -> str:
     """Effective standing through nested memberships: the weakest link wins."""
     for s in _CHAIN_RANK:
@@ -67,7 +72,10 @@ class WalkResult:
 
 def walk_group(root_id: str, root_name: str, fetch: Fetch, max_depth: int = 10) -> WalkResult:
     res = WalkResult()
-    seen = {root_id.lower()}
+    # Strongest effective state each nested group has been expanded with: a group reachable by several paths is
+    # re-expanded when a later path gives it stronger standing (e.g. permanent via B after eligible via A), so a
+    # standing exception cannot be hidden behind a weaker path. Strictly-stronger-only keeps this finite.
+    best: dict[str, int] = {}
     # node: (group id, group name, [(id, name) from root to node], [edge states from root to node])
     queue = [(root_id.lower(), root_name, [(root_id.lower(), root_name)], [])]
     while queue:
@@ -115,11 +123,11 @@ def walk_group(root_id: str, root_name: str, fetch: Fetch, max_depth: int = 10) 
                 "via_group": gname, "path": " > ".join(n or i for i, n in path) + f" > {obj.get('displayName') or pid}",
                 "group_path_ids": ";".join(i for i, _ in path),
             })
-            if mtype == GROUP and access == "member" and pid not in seen:
+            if mtype == GROUP and access == "member" and pid not in [i for i, _ in path] and best.get(pid, -1) < strength(effective):
                 if len(path) >= max_depth:
                     res.errors.append(("max_depth", pid, f"nested group below depth {max_depth} not expanded"))
                 else:
-                    seen.add(pid)
+                    best[pid] = strength(effective)
                     queue.append((pid, obj.get("displayName") or pid, path + [(pid, obj.get("displayName") or pid)], chain + [state]))
     return res
 

@@ -6,13 +6,16 @@ from dataclasses import dataclass, field
 
 from .roles import STANDARD
 
-# Delegated Graph permissions each feature needs (named in coverage gaps so a missing grant is actionable).
+# Graph permissions each feature needs, named in coverage gaps so a missing grant is actionable. With
+# auth.mode=certificate these are *application* permissions on the app registration (admin consent):
+# Directory.Read.All, RoleManagement.Read.Directory, PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All,
+# plus Azure Reader at the tenant root management group. With auth.mode=cli they are delegated scopes.
 PERM_DIRECTORY_ROLES = "RoleManagement.Read.Directory"
 PERM_DIRECTORY_ELIGIBLE = "RoleEligibilitySchedule.Read.Directory (or RoleManagement.Read.Directory)"
 PERM_GROUP_ELIGIBLE = "PrivilegedEligibilitySchedule.Read.AzureADGroup"
 PERM_GROUP_ASSIGNMENT = "PrivilegedAssignmentSchedule.Read.AzureADGroup"
 PERM_ACCESS_REVIEWS = "AccessReview.Read.All"
-PERM_GROUP_MEMBERS = "GroupMember.Read.All"
+PERM_GROUP_MEMBERS = "Directory.Read.All (or GroupMember.Read.All)"
 
 AZURE, ENTRA, PIM_GROUP = "azure_privileged_role", "entra_privileged_role", "pim_for_groups"
 _MISSING = re.compile(r"missing permission scope ([A-Za-z0-9_.,]+)")

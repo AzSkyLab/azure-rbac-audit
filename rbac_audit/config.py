@@ -22,6 +22,17 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True)
+class AuthConfig:
+    """How the collector signs in. `cli` reuses `az login`; `certificate` uses an app registration + PEM key."""
+    mode: str = "cli"
+    client_id: str = ""
+    certificate_path: str = ""
+
+    def public_dict(self) -> dict:
+        return {"mode": self.mode, "client_id": self.client_id, "certificate_path": self.certificate_path}
+
+
+@dataclass(frozen=True)
 class Config:
     tenant_id: str
     subscriptions: tuple[str, ...]
@@ -36,6 +47,7 @@ class Config:
     custom_role_sensitive_data_actions: tuple[str, ...]
     entra_enabled: bool = True
     group_max_depth: int = 10
+    auth: AuthConfig = AuthConfig()
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -52,6 +64,7 @@ class Config:
             "custom_role_sensitive_data_actions": list(self.custom_role_sensitive_data_actions),
             "entra_enabled": self.entra_enabled,
             "group_max_depth": self.group_max_depth,
+            "auth": self.auth.public_dict(),
         }
 
 
@@ -90,6 +103,16 @@ def parse_config(raw: dict) -> Config:
     depth = entra.get("max_group_depth", 10)
     if not isinstance(depth, int) or depth < 1:
         raise ConfigError("entra.max_group_depth must be a positive integer")
+    auth_raw = raw.get("auth") or {}
+    mode = str(auth_raw.get("mode", "cli")).lower()
+    if mode not in ("cli", "certificate"):
+        raise ConfigError("auth.mode must be 'cli' or 'certificate'")
+    client_id, cert = str(auth_raw.get("client_id") or ""), str(auth_raw.get("certificate_path") or "")
+    if mode == "certificate":
+        if not _GUID.match(client_id) or client_id == _NIL_GUID:
+            raise ConfigError("auth.client_id must be the app registration's application (client) id GUID")
+        if not cert:
+            raise ConfigError("auth.certificate_path is required for auth.mode 'certificate'")
     return Config(
         tenant_id=tenant.lower(),
         subscriptions=tuple(s.lower() for s in subs),
@@ -104,6 +127,7 @@ def parse_config(raw: dict) -> Config:
         custom_role_sensitive_data_actions=data_actions,
         entra_enabled=bool(entra.get("enabled", True)),
         group_max_depth=depth,
+        auth=AuthConfig(mode, client_id.lower(), cert),
     )
 
 

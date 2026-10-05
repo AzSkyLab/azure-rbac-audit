@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 DEFS = "/v1.0/identityGovernance/accessReviews/definitions"
 COMPLETED = {"completed", "applied"}
+INACTIVE_STATUSES = {"completed", "stopped", "stopping"}  # definition statuses that are no longer running a review
+FAILED_APPLY = {"new", "appliedwithunknownfailure", "applynotsupported"}  # applyResult values meaning "not applied"
 _INTERVAL_DAYS = {"daily": 1, "weekly": 7, "absolutemonthly": 30, "relativemonthly": 30,
                   "absoluteyearly": 365, "relativeyearly": 365}  # months approximated as 30 days (quarterly = 90)
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])"
 
 REVIEW_COLUMNS = [
     "group_id", "group_name", "definition_id", "definition_name", "review_kind", "covers_via", "scope_query",
-    "definition_status", "recurrence", "interval_days", "frequency_ok", "reviewers", "self_review",
+    "definition_status", "active", "recurrence", "interval_days", "frequency_ok", "reviewers", "self_review",
     "default_decision", "default_approve", "auto_apply", "latest_instance_id", "latest_instance_status",
     "latest_instance_start", "latest_instance_end", "overdue", "latest_completed_instance_id",
     "latest_completed_end", "completed_within_frequency", "decisions_total", "decisions_denied",
@@ -33,16 +35,37 @@ DECISION_COLUMNS = [
 ]
 EXCEPTION_COLUMNS = ["group_id", "group_name", "reason", "detail", "review_ids"]
 REASONS = ["no_review", "frequency_too_low", "overdue", "not_completed", "decisions_not_applied",
-           "denied_still_member", "self_review", "default_approve"]
+           "denied_still_member", "self_review", "default_approve", "coverage_gap"]
 
 
 def parse_dt(s: str | None) -> datetime | None:
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def definition_active(defn: dict, now: datetime) -> tuple[bool, str]:
+    """A stopped/completed definition, or one whose recurrence range has ended, is not running reviews any more."""
+    status = (defn.get("status") or "").lower()
+    if status in INACTIVE_STATUSES:
+        return False, f"definition status {defn.get('status')}"
+    rng = ((defn.get("settings") or {}).get("recurrence") or {}).get("range") or {}
+    if (rng.get("type") or "").lower() == "enddate" and rng.get("endDate"):
+        try:
+            if date.fromisoformat(str(rng["endDate"])[:10]) < now.date():
+                return False, f"recurrence range ended {rng['endDate']}"
+        except ValueError:
+            pass
+    return True, ""
+
+
+def decision_applied(item: dict) -> bool:
+    """A decision counts as applied only if appliedDateTime is set and applyResult is not a failure."""
+    return bool(item.get("appliedDateTime")) and (item.get("applyResult") or "").lower() not in FAILED_APPLY
 
 
 def _q(obj: dict | None) -> str:
@@ -150,14 +173,16 @@ class ReviewResult:
     reviews: list[dict] = field(default_factory=list)
     decisions: list[dict] = field(default_factory=list)
     exceptions: list[dict] = field(default_factory=list)
-    gaps: list[str] = field(default_factory=list)
 
 
 def evaluate(groups: dict, coverages: dict[str, list[Coverage]], decisions: dict[tuple[str, str], list[dict] | None],
-             member_rows: list[dict], role_rows: list[dict], now: datetime, freq_days: int) -> ReviewResult:
-    """`groups`: id -> PrivilegedGroup. `decisions`: (definition, instance) -> items, or None if unreadable."""
+             member_rows: list[dict], role_rows: list[dict], now: datetime, freq_days: int,
+             unreadable_defs: list[dict] | None = None) -> ReviewResult:
+    """`groups`: id -> PrivilegedGroup. `decisions`: (definition, instance) -> items, or None if unreadable.
+    `unreadable_defs`: definitions whose instances could not be read; whatever depends on them is a coverage_gap."""
     res = ReviewResult()
     window = timedelta(days=freq_days)
+    unreadable = {d["id"]: d for d in unreadable_defs or []}
     for gid, group in groups.items():
         gname = group.name
         mrows = [r for r in member_rows if gid in r["group_path_ids"].split(";")]
@@ -166,38 +191,44 @@ def evaluate(groups: dict, coverages: dict[str, list[Coverage]], decisions: dict
         holds_role = any(r["principal_id"].lower() == gid and r["privilege_tier"] != "standard" for r in role_rows)
         covs = coverages.get(gid, [])
         flags = {r: [] for r in REASONS}
-        freq_ok_ids, completed_ok_ids, applied_ok_ids, has_completed = [], [], [], []
+        unknown: list[str] = []
+        # An enumerated (all-groups) review whose instances are unreadable might cover this group.
+        for d in unreadable.values():
+            if d.get("instanceEnumerationScope") and not any(c.defn["id"] == d["id"] for c in covs):
+                unknown.append(f"instances of all-groups review '{d.get('displayName')}' unreadable; it may cover this group")
+        qual_freq, qual_complete = set(), set()
         for c in covs:
             d, s = c.defn, c.defn.get("settings") or {}
+            ids = d["id"]
+            active, inactive_reason = definition_active(d, now)
+            c_unknown = ids in unreadable
+            if c_unknown:
+                unknown.append(f"instances of review '{d.get('displayName')}' unreadable")
             days = interval_days(d)
             started, done = latest_started(c.instances, now), latest_completed(c.instances)
-            overdue = bool(started and (started.get("status") or "").lower() == "inprogress"
-                           and (parse_dt(started.get("endDateTime")) or now) < now)
+            overdue = active and bool(started and (started.get("status") or "").lower() == "inprogress"
+                                      and (parse_dt(started.get("endDateTime")) or now) < now)
             done_end = parse_dt(done.get("endDateTime")) if done else None
             within = bool(done_end and now - done_end <= window)
-            items = decisions.get((d["id"], done["id"])) if done else []
+            items = decisions.get((ids, done["id"]), []) if done else []
+            if done and items is None:
+                unknown.append(f"decisions of review '{d.get('displayName')}' instance {done['id']} unreadable")
             deny = [x for x in items or [] if (x.get("decision") or "").lower() == "deny"]
-            auto = bool(s.get("autoApplyDecisionsEnabled"))
-            unapplied = [x for x in deny if not x.get("appliedDateTime")]
-            still = []
-            for x in deny:
-                pid = ((x.get("principal") or {}).get("id") or "").lower()
-                if pid in {r["member_id"] for r in mrows} or (pid == gid and holds_role):
-                    still.append(x)
-            selfrev = self_review(d, member_ids, group_ids)
-            default_approve = bool(s.get("defaultDecisionEnabled")) and (s.get("defaultDecision") or "").lower() == "approve"
+            unapplied = [x for x in deny if not decision_applied(x)]  # judged on the decisions, not on autoApply
+            still = [x for x in deny if ((x.get("principal") or {}).get("id") or "").lower() in {r["member_id"] for r in mrows}
+                     or (((x.get("principal") or {}).get("id") or "").lower() == gid and holds_role)]
+            selfrev = self_review(d, member_ids, group_ids) if active else ""
+            default_approve = active and bool(s.get("defaultDecisionEnabled")) and (s.get("defaultDecision") or "").lower() == "approve"
             frequency_ok = days is not None and days <= freq_days
-            ids = d["id"]
-            if frequency_ok:
-                freq_ok_ids.append(ids)
-            if within:
-                completed_ok_ids.append(ids)
-            if done:
-                has_completed.append(ids)
-                if items is not None and (auto or not unapplied):
-                    applied_ok_ids.append(ids)
+            if active and frequency_ok:
+                qual_freq.add(ids)
+            if active and within and not c_unknown:
+                qual_complete.add(ids)
             if overdue:
                 flags["overdue"].append(f"{ids}: instance {started['id']} InProgress, ended {started.get('endDateTime')}")
+            if unapplied:
+                flags["decisions_not_applied"].append(
+                    f"{ids}: {len(unapplied)} denied decision(s) without a successful apply (appliedDateTime/applyResult)")
             if still:
                 flags["denied_still_member"].append(f"{ids}: " + ", ".join(
                     (x.get("principal") or {}).get("displayName") or (x.get("principal") or {}).get("id", "?") for x in still))
@@ -205,16 +236,14 @@ def evaluate(groups: dict, coverages: dict[str, list[Coverage]], decisions: dict
                 flags["self_review"].append(f"{ids}: {selfrev}")
             if default_approve:
                 flags["default_approve"].append(f"{ids}: no-response decision is Approve")
-            if done and items is None:
-                res.gaps.append(f"decisions of review '{d.get('displayName')}' instance {done['id']} unreadable")
             res.reviews.append({
                 "group_id": gid, "group_name": gname, "definition_id": ids, "definition_name": d.get("displayName", ""),
                 "review_kind": c.kind, "covers_via": c.via, "scope_query": (d.get("scope") or {}).get("query", ""),
-                "definition_status": d.get("status", ""), "recurrence": recurrence_text(d),
+                "definition_status": d.get("status", ""), "active": active, "recurrence": recurrence_text(d),
                 "interval_days": "" if days is None else days, "frequency_ok": frequency_ok,
                 "reviewers": reviewers_text(d), "self_review": bool(selfrev),
                 "default_decision": s.get("defaultDecision", "") if s.get("defaultDecisionEnabled") else "",
-                "default_approve": default_approve, "auto_apply": auto,
+                "default_approve": default_approve, "auto_apply": bool(s.get("autoApplyDecisionsEnabled")),
                 "latest_instance_id": started["id"] if started else "",
                 "latest_instance_status": (started or {}).get("status", ""),
                 "latest_instance_start": (started or {}).get("startDateTime", ""),
@@ -238,16 +267,23 @@ def evaluate(groups: dict, coverages: dict[str, list[Coverage]], decisions: dict
                     "applied_by": (x.get("appliedBy") or {}).get("displayName", ""),
                 })
         details = {r: " | ".join(v) for r, v in flags.items() if v}
+        names = lambda ids: ", ".join(sorted(c.defn.get("displayName") or c.defn["id"] for c in covs if c.defn["id"] in ids))  # noqa: E731
         if not covs:
-            details["no_review"] = "no access review covers this group (group membership, PIM for Groups or Azure role scope)"
-        else:
-            if not freq_ok_ids:
-                details["frequency_too_low"] = (f"no covering review recurs within {freq_days} days: "
-                                                + "; ".join(f"{c.defn.get('displayName')} ({recurrence_text(c.defn)})" for c in covs))
-            if not completed_ok_ids:
-                details["not_completed"] = f"no covering review has a completed instance ending within the last {freq_days} days"
-            if has_completed and not applied_ok_ids:
-                details["decisions_not_applied"] = "denied decisions not applied and autoApplyDecisionsEnabled is false"
+            if not unknown:
+                details["no_review"] = "no access review covers this group (group membership, PIM for Groups or Azure role scope)"
+        elif not qual_freq:
+            why = "; ".join(f"{c.defn.get('displayName')} ({recurrence_text(c.defn)}"
+                            + ("" if definition_active(c.defn, now)[0] else f", inactive: {definition_active(c.defn, now)[1]}") + ")"
+                            for c in covs)
+            details["frequency_too_low"] = f"no active covering review recurs within {freq_days} days: {why}"
+            if not qual_complete and not unknown:
+                details["not_completed"] = f"no active covering review has a completed instance ending within the last {freq_days} days"
+        elif not (qual_freq & qual_complete) and not any(i in unreadable for i in qual_freq):
+            # Some review recurs often enough, but no single review both recurs in time and completed in the window.
+            details["not_completed"] = (f"review(s) recurring within {freq_days} days ({names(qual_freq)}) have no completed "
+                                        f"instance ending within the last {freq_days} days")
+        if unknown:
+            details["coverage_gap"] = " | ".join(dict.fromkeys(unknown))
         for reason in REASONS:
             if reason in details:
                 res.exceptions.append({"group_id": gid, "group_name": gname, "reason": reason, "detail": details[reason],

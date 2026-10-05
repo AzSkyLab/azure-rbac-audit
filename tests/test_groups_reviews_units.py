@@ -114,3 +114,85 @@ def test_missing_permissions_parse():
     e = 'x "message":"Authorization failed due to missing permission scope A.Read.All,B.ReadWrite.All.","y"'
     assert missing_permissions(e) == ["A.Read.All"]            # ReadWrite alternatives never recommended
     assert missing_permissions("HTTP 403 nope") == []
+
+
+# ---- diamond: a nested group reachable by two paths ------------------------------------------------------------
+def _grp(i):
+    return f"0000000b-0000-0000-0000-0000000000{i:02d}"
+
+
+def _user(n):
+    return {"@odata.type": "#microsoft.graph.user", "id": f"0000000a-0000-0000-0000-0000000000{n:02d}", "displayName": f"u{n}",
+            "userPrincipalName": f"u{n}@x.example"}
+
+
+def _g(i, name):
+    return {"@odata.type": "#microsoft.graph.group", "id": _grp(i), "displayName": name}
+
+
+def _inst(g, member, eligible=False, atype="Assigned"):
+    d = {"groupId": _grp(g), "principalId": member["id"], "accessId": "member", "principal": member, "startDateTime": "2025-01-01T00:00:00Z"}
+    if not eligible:
+        d["assignmentType"] = atype
+    return d
+
+
+def diamond_fetch(assigned, eligible=()):
+    """P contains nested groups A and B; both contain N; N contains user u1 (permanent in N)."""
+    A, B, N = _g(2, "A"), _g(3, "B"), _g(4, "N")
+    data = {
+        _grp(1): {"members": [A, B], "assigned": list(assigned), "eligible": list(eligible)},
+        _grp(2): {"members": [N]}, _grp(3): {"members": [N]}, _grp(4): {"members": [_user(1)]},
+    }
+
+    def fetch(cat, path):
+        gid = path.split("/groups/")[1].split("/")[0] if "/groups/" in path else path.split("'")[1]
+        key = {"graph_group_members": "members", "graph_group_owners": "owners", "graph_group_pim_assignments": "assigned",
+               "graph_group_pim_eligibility": "eligible"}[cat]
+        return data.get(gid, {}).get(key, []), None
+    return fetch, A, B
+
+
+def test_diamond_weak_path_walked_first_does_not_hide_the_permanent_path():
+    A, B = _g(2, "A"), _g(3, "B")
+    # Walk order follows the assignment list: A (only ACTIVATED in P) is expanded before B (PERMANENT in P).
+    fetch, _, _ = diamond_fetch([_inst(1, A, atype="Activated"), _inst(1, B)])
+    res = walk_group(_grp(1), "P", fetch)
+    by_path = {r["path"]: r["state"] for r in res.rows if r["member_type"] == "User"}
+    assert by_path == {"P > A > N > u1": "activated", "P > B > N > u1": "permanent"}   # N re-expanded via the stronger path
+    assert [r["path"] for r in standing_exceptions(res.rows)] == ["P > B > N > u1"]
+
+
+def test_diamond_strong_path_first_leaves_weaker_path_unexpanded():
+    A, B = _g(2, "A"), _g(3, "B")
+    fetch, _, _ = diamond_fetch([_inst(1, B), _inst(1, A, atype="Activated")])
+    res = walk_group(_grp(1), "P", fetch)
+    assert {r["path"]: r["state"] for r in res.rows if r["member_type"] == "User"} == {"P > B > N > u1": "permanent"}
+
+
+def test_diamond_eligible_branch_is_never_what_hides_a_standing_user():
+    A, B = _g(2, "A"), _g(3, "B")
+    fetch, _, _ = diamond_fetch([_inst(1, B)], [_inst(1, A, True)])
+    res = walk_group(_grp(1), "P", fetch)
+    assert [r["path"] for r in standing_exceptions(res.rows)] == ["P > B > N > u1"]
+
+
+def test_equal_strength_paths_are_not_duplicated():
+    A, B = _g(2, "A"), _g(3, "B")
+    fetch, _, _ = diamond_fetch([_inst(1, A), _inst(1, B)])
+    res = walk_group(_grp(1), "P", fetch)
+    assert len([r for r in res.rows if r["member_type"] == "User"]) == 1
+
+
+def test_stronger_path_reexpansion_terminates_on_cycles():
+    A, B = _g(2, "A"), _g(3, "B")
+    data = {_grp(1): {"members": [A, B], "assigned": [_inst(1, B)], "eligible": [_inst(1, A, True)]},
+            _grp(2): {"members": [B]}, _grp(3): {"members": [A, _user(1)]}}
+
+    def fetch(cat, path):
+        gid = path.split("/groups/")[1].split("/")[0] if "/groups/" in path else path.split("'")[1]
+        key = {"graph_group_members": "members", "graph_group_pim_assignments": "assigned", "graph_group_pim_eligibility": "eligible"}.get(cat)
+        return (data.get(gid, {}).get(key, []) if key else []), None
+
+    res = walk_group(_grp(1), "P", fetch)           # A <-> B cycle with different strengths must not loop forever
+    assert any(r["member_type"] == "User" and r["state"] == "permanent" for r in res.rows) and len(res.rows) < 40

@@ -63,10 +63,21 @@ Access reviews (`identityGovernance/accessReviews`) cover a group if the definit
 (membership or PIM for Groups review) or an Azure role review's scope path is a prefix of a scope where the group holds a role
 (a `principalType eq 'User'` filter excludes groups). Frequency uses `review_frequency_days` (monthly = 30 days, so quarterly = 90).
 
-**Delegated Graph permissions needed (all read-only):** `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup`
-(covers both group PIM schedule APIs), `AccessReview.Read.All`, plus directory read for groups/users (`GroupMember.Read.All` /
-`Directory.Read.All`). The Azure CLI token does **not** carry the first three; any 403 is recorded as a coverage gap
-(`coverage_gaps_by_area`, `missing_graph_permissions`), exceptions that depend on it are `unverified`/`coverage_gap`, never a pass.
+**Permissions (all read-only).** Application permissions on the collector's app registration (admin consent):
+`Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` (covers both group PIM schedule
+APIs), `AccessReview.Read.All`; plus Azure **Reader** at the tenant root management group (ARM/Resource Graph). With
+`auth.mode: cli` the same names apply as delegated scopes, and the Azure CLI token does **not** carry
+`RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` or `AccessReview.Read.All`. Any 403 is recorded as a
+coverage gap (`coverage_gaps_by_area`, `missing_graph_permissions`); exceptions that depend on it are
+`unverified`/`coverage_gap`, never a pass.
+
+### Authentication
+
+`auth.mode: cli` (default) uses the `az login` session. `auth.mode: certificate` uses
+`azure.identity.CertificateCredential(tenant_id, client_id, certificate_path)` for both ARM and Graph (config:
+`auth.client_id`, `auth.certificate_path`; no secrets in config; a warning is printed if the PEM is readable by anyone but
+its owner). The manifest records the identity (type, appId/UPN), the Graph token's `roles` / `scp`, and
+`collector_identity_read_only` (false, with a CLI warning, if any granted role or scope contains "Write").
 
 ### Minimal lab setup to exercise each path live
 
@@ -83,4 +94,17 @@ Access reviews (`identityGovernance/accessReviews`) cover a group if the definit
    recurrence (`default_approve`, `self_review`, `frequency_too_low`); (c) a one-day review left unreviewed for >1 day (`overdue`);
    (d) a PIM for Groups review and (e) an Azure resource role review (PIM > Azure resources > Access reviews) at the subscription;
    leave one privileged group with no review (`no_review`).
-4. *Token:* run with credentials that carry the three permissions above (e.g. a delegated sign-in with those scopes consented).
+4. *Token:* run with `auth.mode: certificate` (or credentials) carrying the permissions above.
+
+### Review-evaluation rules
+
+- A covering review counts only if it is *active* (definition status not Completed/Stopped, recurrence range not ended;
+  `access_reviews.csv` keeps inactive ones with `active=False`). One active review must both recur within
+  `review_frequency_days` and have a completed instance ending inside that window; otherwise `frequency_too_low` /
+  `not_completed`.
+- A Deny only counts as applied if `appliedDateTime` is set and `applyResult` is not a failure (`New`,
+  `AppliedWithUnknownFailure`, `ApplyNotSupported`), regardless of `autoApplyDecisionsEnabled`.
+- If a covering definition's instances, or the latest decisions, cannot be read the group gets a `coverage_gap` row instead of
+  a guessed `not_completed` or a silent pass.
+- Nested groups reachable by several paths are re-expanded when a later path gives stronger standing (permanent beats
+  eligible), so a standing exception cannot hide behind a weaker path.

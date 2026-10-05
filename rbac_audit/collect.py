@@ -183,12 +183,17 @@ class CollectionFailed(RuntimeError):
 
 
 def _base_info(cfg: Config, identity: dict, started: datetime, raw: RawStore, status: str) -> dict:
-    return {
+    identity = dict(identity)
+    read_only = identity.pop("read_only", None)
+    info = {
         "status": status, "tool": "rbac-audit", "tool_version": __version__,
         "run_started_utc": started.astimezone(timezone.utc).isoformat(timespec="seconds"),
         "run_finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "signed_in_identity": identity, "config": cfg.public_dict(), "api_calls": raw.calls,
     }
+    if read_only is not None:
+        info["collector_identity_read_only"] = read_only
+    return info
 
 
 def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: dict, started: datetime) -> RunResult:

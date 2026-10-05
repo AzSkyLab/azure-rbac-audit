@@ -215,3 +215,36 @@ def test_phase2_crash_does_not_lose_phase1_evidence(cfg):
     result = run_collection(cfg, Boom(raw), raw, run_dir, {}, NOW)
     assert result.info["status"] == "complete" and len(read(run_dir, "assignments.csv")) == 11
     assert "phase2" in result.info["summary"]["coverage_gaps_by_area"]
+
+
+D = lambda n: f"dddddddd-0000-0000-0000-00000000000{n}"  # noqa: E731
+I = lambda n: f"eeeeeeee-0000-0000-0000-00000000000{n}"  # noqa: E731
+DEFS = "/v1.0/identityGovernance/accessReviews/definitions"
+
+
+def group_reasons(d, gid):
+    return {r["reason"] for r in read(d, "exceptions_access_review.csv") if r["group_id"] == gid}
+
+
+def test_unreadable_instances_of_a_covering_review_is_coverage_gap_not_false_not_completed(cfg):
+    err = "HTTP 403 AccessReview.Read.All denied"
+    result, d = run(cfg, graph_errors={f"{DEFS}/{D(1)}/instances": err})
+    g1 = group_reasons(d, G1)
+    assert "coverage_gap" in g1 and "not_completed" not in g1 and "frequency_too_low" not in g1
+    assert any("instances of review" in x for x in result.info["summary"]["coverage_gaps_by_area"]["access_reviews"])
+    assert result.info["summary"]["coverage_complete"] is False
+    # Other groups are unaffected.
+    assert group_reasons(d, G4) == {"no_review"}
+
+
+def test_unreadable_decisions_is_coverage_gap_not_silent_pass(cfg):
+    result, d = run(cfg, graph_errors={f"{DEFS}/{D(5)}/instances/{I(6)}/decisions": "HTTP 500 boom"})
+    g3 = group_reasons(d, G3)
+    assert "coverage_gap" in g3 and not {"decisions_not_applied", "denied_still_member"} & g3
+    assert result.info["summary"]["coverage_complete"] is False
+
+
+def test_access_reviews_csv_has_active_column(ok):
+    _, d = ok
+    rows = read(d, "access_reviews.csv")
+    assert "active" in rows[0] and {r["active"] for r in rows} == {"True"}

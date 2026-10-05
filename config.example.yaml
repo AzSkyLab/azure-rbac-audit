@@ -59,3 +59,13 @@ custom_role_sensitive_data_actions:
 entra:
   enabled: true
   max_group_depth: 10     # nested-group expansion depth
+
+# Sign-in. Default `cli` reuses your `az login` session (its Graph token lacks the PIM-for-Groups, directory-role
+# eligibility and access-review permissions, so phase 2 reports coverage gaps). For full coverage use an app
+# registration with a certificate (no secret in this file; keep the PEM, private key included, at mode 600):
+#   Graph APPLICATION permissions (admin consent): Directory.Read.All, RoleManagement.Read.Directory,
+#   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All; Azure RBAC: Reader at the tenant root management group.
+# auth:
+#   mode: certificate                       # cli | certificate
+#   client_id: "<application (client) id>"
+#   certificate_path: "~/.config/rbac-audit/rbac-audit-collector.pem"

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .api import AzureApi, RawStore
-from .auth import ARM_SCOPE, get_credential, identity_from_claims, token_claims
+from .auth import build_credential, describe_identity
 from .collect import CollectionFailed, RunResult, new_run_dir, run_collection
 from .config import ConfigError, load_config
 
@@ -19,8 +19,14 @@ def _collect_cmd(args) -> int:
     except (OSError, ConfigError) as e:
         print(f"config error: {e}", file=sys.stderr)
         return 2
-    cred = get_credential()
-    identity = identity_from_claims(token_claims(cred.get_token(ARM_SCOPE).token))
+    try:
+        cred, auth_warnings = build_credential(cfg.auth, cfg.tenant_id)
+    except ConfigError as e:
+        print(f"config error: {e}", file=sys.stderr)
+        return 2
+    identity = describe_identity(cred)
+    identity["auth_mode"] = cfg.auth.mode
+    identity["auth_warnings"] = auth_warnings
     if (identity["tenant_id"] or "").lower() != cfg.tenant_id:
         print(f"signed in to tenant {identity['tenant_id']}, config expects {cfg.tenant_id}; refusing to run",
               file=sys.stderr)
@@ -47,6 +53,11 @@ def summarize(result: RunResult) -> tuple[list[str], list[str]]:
     out = [f"evidence written to {result.run_dir}", json.dumps(info["summary"], indent=2),
            f"manifest sha256: {result.manifest_sha256}"]
     err = [f"WARNING: {w}" for w in info["warnings"]]
+    err += [f"WARNING: {w}" for w in info["signed_in_identity"].get("auth_warnings", [])]
+    if info.get("collector_identity_read_only") is False:
+        gt = info["signed_in_identity"].get("graph_token", {})
+        bad = [p for p in gt.get("roles", []) + gt.get("scp", []) if "write" in p.lower()]
+        err.append("WARNING: collector identity is NOT read-only; its Graph token carries write permissions: " + ", ".join(bad))
     s = info["summary"]
     areas = s.get("coverage_gaps_by_area", {})
     if areas.get("azure_rbac") or not s["coverage_complete"] and not areas:

@@ -3,14 +3,32 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import threading
 import time
+from pathlib import Path
 
 from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from azure.identity import AzureCliCredential, CertificateCredential, DefaultAzureCredential
+
+from .config import AuthConfig, ConfigError
 
 ARM_SCOPE = "https://management.azure.com/.default"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
+
+
+def build_credential(auth: AuthConfig, tenant_id: str):
+    """Credential for the configured auth mode. Returns (credential, warnings). No secret is stored or logged."""
+    if auth.mode != "certificate":
+        return get_credential(), []
+    path = Path(os.path.expanduser(auth.certificate_path))
+    if not path.is_file():
+        raise ConfigError(f"auth.certificate_path does not exist: {path}")
+    warnings = []
+    mode = path.stat().st_mode & 0o777
+    if mode & 0o177:  # anything beyond owner read/write
+        warnings.append(f"certificate file {path} has mode {mode:o}; it holds a private key, chmod 600 it")
+    return CertificateCredential(tenant_id=tenant_id, client_id=auth.client_id, certificate_path=str(path)), warnings
 
 
 def get_credential():
@@ -46,6 +64,17 @@ def token_claims(token: str) -> dict:
     payload = token.split(".")[1]
     payload += "=" * (-len(payload) % 4)
     return json.loads(base64.urlsafe_b64decode(payload))
+
+
+def describe_identity(cred) -> dict:
+    """Who the collector is: ARM token identity plus the Graph token's app roles / delegated scopes, and whether
+    any of those grant write access (the collector must be read-only)."""
+    ident = identity_from_claims(token_claims(cred.get_token(ARM_SCOPE).token))
+    graph = token_claims(cred.get_token(GRAPH_SCOPE).token)
+    roles, scopes = list(graph.get("roles") or []), (graph.get("scp") or "").split()
+    ident["graph_token"] = {"roles": sorted(roles), "scp": sorted(scopes)}
+    ident["read_only"] = not any("write" in p.lower() for p in roles + scopes)
+    return ident
 
 
 def identity_from_claims(claims: dict) -> dict:

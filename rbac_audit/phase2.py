@@ -107,9 +107,11 @@ def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: 
         return p2
     results = api.parallel(lambda d: api.graph_list("graph_access_review_instances", f"{reviews.DEFS}/{d['id']}/instances"), defs)
     instances: dict[str, list[dict]] = {}
+    unreadable_defs: list[dict] = []
     for d, (items, err) in zip(defs, results):
         if err:
             p2.gap(AREA_REVIEWS, f"instances of review '{d.get('displayName')}' unreadable", err, entra.PERM_ACCESS_REVIEWS)
+            unreadable_defs.append(d)
         instances[d["id"]] = items or []
     role_scopes = {gid: [r["scope"] for r in rows if r["principal_id"].lower() == gid and r["privilege_tier"] != "standard"]
                    for gid in groups}
@@ -121,6 +123,7 @@ def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: 
         decisions[k] = items
         if err:
             p2.gap(AREA_REVIEWS, f"decisions of review {k[0]} instance {k[1]} unreadable", err, entra.PERM_ACCESS_REVIEWS)
-    ev = reviews.evaluate(groups, coverages, decisions, p2.members, rows, now, cfg.review_frequency_days)
+    ev = reviews.evaluate(groups, coverages, decisions, p2.members, rows, now, cfg.review_frequency_days,
+                         unreadable_defs)
     p2.reviews, p2.decisions, p2.review_exceptions = ev.reviews, ev.decisions, ev.exceptions
     return p2
