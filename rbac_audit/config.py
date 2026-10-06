@@ -33,6 +33,23 @@ class AuthConfig:
 
 
 @dataclass(frozen=True)
+class AllowEntry:
+    """An accepted exception: matches rows by principal id, optionally narrowed to a role name and scope."""
+    principal_id: str
+    reason: str
+    role: str = ""
+    scope: str = ""
+
+    def matches(self, row: dict) -> bool:
+        return (row.get("principal_id", "").lower() == self.principal_id
+                and (not self.role or row.get("role_name", "").lower() == self.role.lower())
+                and (not self.scope or row.get("scope", "").lower().rstrip("/") == self.scope.lower().rstrip("/")))
+
+    def public_dict(self) -> dict:
+        return {"principal_id": self.principal_id, "role": self.role, "scope": self.scope, "reason": self.reason}
+
+
+@dataclass(frozen=True)
 class Config:
     tenant_id: str
     subscriptions: tuple[str, ...]
@@ -48,6 +65,7 @@ class Config:
     entra_enabled: bool = True
     group_max_depth: int = 10
     auth: AuthConfig = AuthConfig()
+    exception_allowlist: tuple[AllowEntry, ...] = ()
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -65,6 +83,7 @@ class Config:
             "entra_enabled": self.entra_enabled,
             "group_max_depth": self.group_max_depth,
             "auth": self.auth.public_dict(),
+            "exception_allowlist": [e.public_dict() for e in self.exception_allowlist],
         }
 
 
@@ -74,6 +93,24 @@ def _strs(value, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ConfigError(f"{name} must be a list of strings")
     return tuple(value)
+
+
+def _allowlist(value) -> tuple[AllowEntry, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError("exception_allowlist must be a list")
+    out = []
+    for i, e in enumerate(value):
+        if not isinstance(e, dict):
+            raise ConfigError(f"exception_allowlist[{i}] must be a mapping")
+        pid, reason = str(e.get("principal_id") or ""), str(e.get("reason") or "").strip()
+        if not _GUID.match(pid):
+            raise ConfigError(f"exception_allowlist[{i}].principal_id must be a principal object id GUID")
+        if not reason:
+            raise ConfigError(f"exception_allowlist[{i}].reason is required (it is the recorded justification)")
+        out.append(AllowEntry(pid.lower(), reason, str(e.get("role") or ""), str(e.get("scope") or "")))
+    return tuple(out)
 
 
 def parse_config(raw: dict) -> Config:
@@ -128,6 +165,7 @@ def parse_config(raw: dict) -> Config:
         entra_enabled=bool(entra.get("enabled", True)),
         group_max_depth=depth,
         auth=AuthConfig(mode, client_id.lower(), cert),
+        exception_allowlist=_allowlist(raw.get("exception_allowlist")),
     )
 
 

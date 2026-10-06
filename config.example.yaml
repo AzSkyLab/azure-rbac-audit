@@ -38,6 +38,8 @@ privileged_roles:
     - Key Vault Data Access Administrator
     - Storage Blob Data Owner
     - Virtual Machine Administrator Login
+    - Azure Event Hubs Data Owner
+    - Azure Service Bus Data Owner
 
 # A custom role is "custom_privileged" if any of its `actions` equals one of
 # these or is a wildcard that covers one of these.
@@ -54,6 +56,17 @@ custom_role_sensitive_data_actions:
   - "Microsoft.KeyVault/vaults/secrets/*"
   - "Microsoft.KeyVault/vaults/keys/*"
   - "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*"
+
+# Accepted exceptions. A matching row is moved out of exceptions_direct_user.csv,
+# exceptions_privileged_permanent.csv and exceptions_entra_privileged_permanent.csv into
+# exceptions_allowlisted.csv together with the reason, so the decision stays in the evidence.
+# `role` (exact role name) and `scope` (exact scope, "/" for Entra tenant-wide) narrow the match; omit them to
+# accept every exception for the principal. Entries that match nothing are reported as warnings.
+exception_allowlist: []
+#  - principal_id: "<object id>"
+#    role: "User Access Administrator"
+#    scope: "/providers/Microsoft.Management/managementGroups/<mg>"
+#    reason: "MS-PIM service principal; Microsoft PIM requires User Access Administrator to manage assignments"
 
 # Phase 2: privileged groups, PIM for Groups membership and access reviews (Microsoft Graph).
 entra:

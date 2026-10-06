@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .pim import ELIGIBLE, UNVERIFIED, label_active
+from .principals import Principal
 from .roles import STANDARD
 
 # Graph permissions each feature needs, named in coverage gaps so a missing grant is actionable. With
@@ -18,6 +20,11 @@ PERM_ACCESS_REVIEWS = "AccessReview.Read.All"
 PERM_GROUP_MEMBERS = "Directory.Read.All (or GroupMember.Read.All)"
 
 AZURE, ENTRA, PIM_GROUP = "azure_privileged_role", "entra_privileged_role", "pim_for_groups"
+ENTRA_ROLE_COLUMNS = [
+    "assignment_id", "state", "role_name", "role_definition_id", "role_privileged", "scope",
+    "principal_id", "principal_type", "principal_name", "principal_upn_or_appid", "principal_resolution",
+    "pim_label", "start", "end",
+]
 _MISSING = re.compile(r"missing permission scope ([A-Za-z0-9_.,]+)")
 
 
@@ -55,13 +62,49 @@ def privileged_role_ids(role_defs: list[dict]) -> dict[str, str]:
     return {d["id"].lower(): d.get("displayName", d["id"]) for d in role_defs if d.get("isPrivileged")}
 
 
-def directory_role_principals(active: list[dict], eligible: list[dict], privileged: dict[str, str]):
-    """Yield (principalId, state, role name, directoryScopeId) for privileged Entra role holders."""
+def directory_role_principals(active: list[dict], eligible: list[dict], privileged: dict[str, str],
+                              known: set[str] | None = None):
+    """Yield (principalId, state, role name, directoryScopeId, assignment, definition_found) for privileged Entra
+    role holders. A role id missing from `known` (every definition Graph listed) is treated as privileged, named by
+    its id: an unreadable definition must not let a holder drop out silently."""
     for state, items in (("active", active), ("eligible", eligible)):
         for a in items:
-            role = privileged.get((a.get("roleDefinitionId") or "").lower())
-            if role:
-                yield a["principalId"].lower(), state, role, a.get("directoryScopeId") or "/"
+            rid = (a.get("roleDefinitionId") or "").lower()
+            if rid in privileged:
+                yield a["principalId"].lower(), state, privileged[rid], a.get("directoryScopeId") or "/", a, True
+            elif known is not None and rid not in known:
+                yield a["principalId"].lower(), state, rid, a.get("directoryScopeId") or "/", a, False
+
+
+def _key(a: dict) -> tuple[str, str, str]:
+    return ((a.get("principalId") or "").lower(), (a.get("roleDefinitionId") or "").lower(),
+            (a.get("directoryScopeId") or "/").lower())
+
+
+def directory_role_rows(holders: list[tuple], instances: list[dict] | None, principals: dict[str, Principal]) -> list[dict]:
+    """Inventory rows for privileged Entra role holders. Active rows are labelled from the directory
+    roleAssignmentScheduleInstances (None = unreadable -> 'unverified'); an assignment with no instance is permanent."""
+    index: dict[tuple, list[dict]] = {}
+    for i in instances or []:
+        if (i.get("memberType") or "Direct") == "Direct":
+            index.setdefault(_key(i), []).append(i)
+    rows = []
+    for pid, state, role, scope, a, found in holders:
+        if state == "eligible":
+            label, start, end = ELIGIBLE, a.get("startDateTime"), a.get("endDateTime")
+        elif instances is None:
+            label, start, end = UNVERIFIED, None, None
+        else:
+            label, start, end = label_active(index.get(_key(a), []))
+        pr = principals.get(pid) or Principal(pid, "Unknown", resolution="unresolved")
+        rows.append({
+            "assignment_id": a.get("id", ""), "state": state, "role_name": role,
+            "role_definition_id": a.get("roleDefinitionId", ""), "role_privileged": "True" if found else "unknown",
+            "scope": scope, "principal_id": pid, "principal_type": pr.type, "principal_name": pr.name,
+            "principal_upn_or_appid": pr.upn_or_appid, "principal_resolution": pr.resolution,
+            "pim_label": label, "start": start or "", "end": end or "",
+        })
+    return rows
 
 
 def build_privileged_groups(azure: dict[str, list[tuple[str, str]]], entra: dict[str, list[tuple[str, str]]],

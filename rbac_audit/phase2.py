@@ -24,6 +24,8 @@ class Phase2:
     reviews: list[dict] = field(default_factory=list)
     decisions: list[dict] = field(default_factory=list)
     review_exceptions: list[dict] = field(default_factory=list)
+    entra_roles: list[dict] = field(default_factory=list)
+    stale_reviews: list[dict] = field(default_factory=list)
     gaps: dict[str, list[str]] = field(default_factory=dict)
     missing_permissions: set[str] = field(default_factory=set)
 
@@ -38,19 +40,28 @@ def _directory_reasons(api, p2: Phase2, principals: dict, resolve) -> dict[str, 
     if err:
         p2.gap(AREA_DIRECTORY, "Entra role definitions (isPrivileged) unreadable", err, entra.PERM_DIRECTORY_ROLES)
         return {}
-    privileged = entra.privileged_role_ids(defs)
+    privileged, known = entra.privileged_role_ids(defs), {d["id"].lower() for d in defs}
     active, err = api.graph_list("graph_dir_roleassignments", "/v1.0/roleManagement/directory/roleAssignments")
     if err:
         p2.gap(AREA_DIRECTORY, "Entra directory role assignments unreadable", err, entra.PERM_DIRECTORY_ROLES)
     eligible, err = api.graph_list("graph_dir_roleeligibility", "/v1.0/roleManagement/directory/roleEligibilityScheduleInstances")
     if err:
         p2.gap(AREA_DIRECTORY, "Entra eligible directory role assignments unreadable", err, entra.PERM_DIRECTORY_ELIGIBLE)
-    holders = list(entra.directory_role_principals(active or [], eligible or [], privileged))
+    instances = None
+    if active is not None:  # PIM schedule instances tell permanent from activated / time-bound
+        instances, ierr = api.graph_list("graph_dir_roleassignment_instances",
+                                         "/v1.0/roleManagement/directory/roleAssignmentScheduleInstances")
+        if ierr:
+            p2.gap(AREA_DIRECTORY, "Entra directory role assignment schedules unreadable; active Entra role labels are "
+                   "'unverified'", ierr, entra.PERM_DIRECTORY_ROLES)
+    holders = list(entra.directory_role_principals(active or [], eligible or [], privileged, known))
     resolve({pid for pid, *_ in holders})
+    p2.entra_roles = entra.directory_role_rows(holders, instances, principals)
     reasons: dict[str, list[tuple[str, str]]] = {}
-    for pid, state, role, scope in holders:
+    for pid, state, role, scope, _, found in holders:
         if principals.get(pid) and principals[pid].type == GROUP:
-            reasons.setdefault(pid, []).append((entra.ENTRA, f"Entra directory role '{role}' (isPrivileged, {state}) at {scope}"))
+            why = "isPrivileged" if found else "definition not found, treated as privileged"
+            reasons.setdefault(pid, []).append((entra.ENTRA, f"Entra directory role '{role}' ({why}, {state}) at {scope}"))
     return reasons
 
 
@@ -105,6 +116,12 @@ def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: 
         p2.review_exceptions = [{"group_id": g.id, "group_name": g.name, "reason": "coverage_gap", "review_ids": "",
                                  "detail": f"access review data unavailable; needs {entra.PERM_ACCESS_REVIEWS}"} for g in groups.values()]
         return p2
+    targets = reviews.review_target_groups(defs, now)
+    unknown = {gid: graph_path(gid, "Group") for gid in targets
+               if not (principals.get(gid) and principals[gid].type == GROUP and principals[gid].resolution == "resolved")}
+    lookups = {gid: (200, None) for gid in targets if gid not in unknown}
+    lookups.update(api.graph_batch(unknown) if unknown else {})
+    p2.stale_reviews = reviews.stale_reviews(targets, lookups)
     results = api.parallel(lambda d: api.graph_list("graph_access_review_instances", f"{reviews.DEFS}/{d['id']}/instances"), defs)
     instances: dict[str, list[dict]] = {}
     unreadable_defs: list[dict] = []

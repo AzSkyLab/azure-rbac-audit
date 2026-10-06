@@ -5,7 +5,8 @@ from conftest import SUB, fixture
 
 
 class FakeApi:
-    def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None):
+    def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None,
+                 deleted=None):
         self.raw = raw
         self.graph = graph or fixture("graph_principals.json")
         self.pim_errors = set(pim_errors)  # {(kind, scope)}
@@ -15,6 +16,7 @@ class FakeApi:
         self.graph_errors = dict(graph_errors or {})  # path prefix or category -> error text
         self.graph_paths: list[str] = []
         self.entra = fixture("entra.json")
+        self.deleted = dict(deleted or {})  # id -> recycle-bin object (soft-deleted)
 
     def _rec(self, category, payload, url="fake://"):
         self.raw.save_json(category, payload, method="GET", url=url, status=200)
@@ -54,7 +56,15 @@ class FakeApi:
         return v, None  # every scope returns everything: exercises de-duplication
 
     def graph_batch(self, paths):
-        out = {pid: tuple(self.graph[pid]) for pid in paths}
+        not_found = (404, {"error": {"code": "Request_ResourceNotFound"}})
+        out = {}
+        for pid, path in paths.items():
+            if path.startswith("/directory/deletedItems/"):
+                out[pid] = (200, self.deleted[pid]) if pid in self.deleted else not_found
+            elif path.startswith("/groups/"):  # existence check of an access review's target group
+                out[pid] = tuple(self.graph.get(pid, not_found))
+            else:
+                out[pid] = tuple(self.graph[pid])
         self._rec("graph_batch", {"responses": list(paths)})
         return out
 
@@ -74,6 +84,8 @@ class FakeApi:
             return e["dir_roledefinitions"], None
         if base == "/v1.0/roleManagement/directory/roleAssignments":
             return e["dir_roleassignments"], None
+        if base == "/v1.0/roleManagement/directory/roleAssignmentScheduleInstances":
+            return e.get("dir_roleassignment_instances", []), None
         if base == "/v1.0/roleManagement/directory/roleEligibilityScheduleInstances":
             return e["dir_roleeligibility"], None
         if m := re.fullmatch(r"/v1.0/groups/([^/]+)/(members|owners)", base):

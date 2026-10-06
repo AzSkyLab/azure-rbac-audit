@@ -19,17 +19,22 @@ Each run writes `evidence/<UTC timestamp>/`:
 | `assignments.csv` | full inventory: principal type, PIM label, privilege tier, scope level, severity, direct-user result |
 | `exceptions_direct_user.csv` | active or eligible assignments held directly by a User / Guest user (header only when compliant) |
 | `exceptions_privileged_permanent.csv` | privileged tier + `permanent_active` |
+| `entra_role_assignments.csv` | every holder (any principal type) of a privileged Entra directory role, active or eligible, labelled from the directory PIM schedule instances like Azure roles |
+| `exceptions_entra_privileged_permanent.csv` | Entra rows labelled `permanent_active` (standing Global Administrator and the like) |
+| `exceptions_allowlisted.csv` | exception rows accepted by `exception_allowlist`, with the source file and the configured reason |
 | `privileged_groups.csv` | groups computed as privileged (Azure role / Entra directory role / PIM for Groups) with reasons |
 | `group_members.csv` | members and owners of each privileged group, nested groups expanded, labelled `eligible_member` / `activated_member` / `time_bound_member` / `permanent_member` / `owner` (`unverified_member` if PIM for Groups could not be read) |
 | `exceptions_privileged_group_standing.csv` | users who are permanent (non-PIM) members/owners of a privileged group |
 | `access_reviews.csv`, `access_review_decisions.csv` | covering access reviews per privileged group and their decisions |
+| `access_reviews_stale.csv` | active reviews whose target group no longer exists (or could not be checked) |
 | `exceptions_access_review.csv` | one row per group per reason: `no_review`, `frequency_too_low`, `overdue`, `not_completed`, `decisions_not_applied`, `denied_still_member`, `self_review`, `default_approve`, or `coverage_gap` when review data could not be read |
 | `manifest.json` | status (`complete`/`failed`), run time, signed-in identity, tenant, scopes, tool version, call log, warnings, coverage, SHA-256 of every file |
 | `manifest.sha256` | `sha256sum`-format digest of `manifest.json` (also printed at the end of the run; record it out-of-band) |
 
 Labels: `permanent_active`, `time_bound_active`, `activated`, `eligible`, plus `unverified` when PIM schedules could not be
 read at that scope (see manifest `warnings`). Principal types: User, Guest user, Group, ServicePrincipal, ManagedIdentity,
-Orphaned (Graph 404). Tiers: `privileged_admin`, `sensitive_data_plane`, `custom_privileged`, `standard`.
+Orphaned (Graph 404; `principal_resolution` is `soft_deleted`, with the name and UPN/appId from the recycle bin, when the
+object can still be restored, else `orphaned`). Tiers: `privileged_admin`, `sensitive_data_plane`, `custom_privileged`, `standard`.
 
 Required read access: Reader (or equivalent) on the scopes, Microsoft Graph directory read (e.g. Directory.Read.All) to resolve
 principals, and permission to read PIM schedules (Role Based Access Control Administrator / Owner / User Access Administrator
@@ -49,6 +54,9 @@ at the scope). Principals Graph denies are reported as `unresolved`, never `Orph
   This is recorded in the manifest as `known_limitations`.
 - Custom roles are tiered on `actions` (-> `custom_privileged`) and `dataActions` (-> `sensitive_data_plane`, patterns in
   `custom_role_sensitive_data_actions`). `notActions` / `notDataActions` are not subtracted (conservative).
+- An Entra role definition that Graph does not list (hidden first-party roles, for example) is treated as privileged and
+  named by its id (`role_privileged = unknown`), so a holder cannot drop out silently. Microsoft first-party service
+  principals holding such roles show up in `exceptions_entra_privileged_permanent.csv`; accept them with the allowlist.
 - CSV cells starting with `= + - @ TAB CR` are prefixed with `'` to prevent spreadsheet formula injection; `raw/` is untouched.
 
 ## Phase 2: privileged groups, PIM for Groups, access reviews
@@ -70,6 +78,13 @@ APIs), `AccessReview.Read.All`; plus Azure **Reader** at the tenant root managem
 `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` or `AccessReview.Read.All`. Any 403 is recorded as a
 coverage gap (`coverage_gaps_by_area`, `missing_graph_permissions`); exceptions that depend on it are
 `unverified`/`coverage_gap`, never a pass.
+
+### Accepted exceptions (`exception_allowlist`)
+
+Entries need `principal_id` and a `reason`; `role` (exact name) and `scope` (exact, `/` for tenant-wide Entra roles)
+narrow the match. Matching rows move from `exceptions_direct_user.csv`, `exceptions_privileged_permanent.csv` and
+`exceptions_entra_privileged_permanent.csv` to `exceptions_allowlisted.csv`; they are never dropped. The allowlist is echoed in
+the manifest config, and an entry that matches nothing is a warning so stale acceptances get cleaned up.
 
 ### Authentication
 

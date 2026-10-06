@@ -9,13 +9,15 @@ from pathlib import Path
 from . import __version__
 from .api import AzureApi, RawStore
 from .config import Config
-from .controls import direct_user_exceptions, privileged_permanent_exceptions
+from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
+from .entra import ENTRA_ROLE_COLUMNS
 from .inventory import COLUMNS, build_inventory, principal_hints
 from .groups import MEMBER_COLUMNS
 from .manifest import write_manifest
 from .phase2 import GROUP_COLUMNS, Phase2, run_phase2
-from .reviews import DECISION_COLUMNS, EXCEPTION_COLUMNS, REVIEW_COLUMNS
-from .principals import DIRECT_USER_TYPES, Principal, classify_principal, graph_path
+from .pim import PERMANENT_ACTIVE
+from .reviews import DECISION_COLUMNS, EXCEPTION_COLUMNS, REVIEW_COLUMNS, STALE_COLUMNS
+from .principals import DIRECT_USER_TYPES, ORPHANED, Principal, classify_principal, graph_path
 from .roles import RoleDef, parse_roledef
 from .scope import guid_of
 
@@ -121,6 +123,13 @@ def _resolve_principals(api: AzureApi, g: Gathered) -> None:
     for pid, hint in hints.items():
         status, body = responses.get(pid, (None, None))
         g.principals[pid] = classify_principal(pid, hint, status, body)
+    # Name orphans still in the recycle bin (soft-deleted, restorable); they stay Orphaned / REVIEW.
+    orphans = [pid for pid, p in g.principals.items() if p.type == ORPHANED]
+    deleted = api.graph_batch({pid: f"/directory/deletedItems/{pid}" for pid in orphans}) if orphans else {}
+    for pid, (status, body) in deleted.items():
+        if status == 200 and body:
+            g.principals[pid] = Principal(pid, ORPHANED, body.get("displayName") or "",
+                                          body.get("userPrincipalName") or body.get("appId") or "", "soft_deleted")
     unresolved = [p for p in g.principals.values() if p.resolution == "unresolved"]
     if unresolved:
         g.warnings.append(f"{len(unresolved)} principal(s) could not be resolved via Graph (check Graph read permission)")
@@ -149,9 +158,9 @@ def new_run_dir(cfg: Config, now: datetime) -> Path:
 
 
 CONTROL_MAPPING = {
-    "AC-2": ["assignments.csv", "exceptions_direct_user.csv"],
-    "AC-6": ["exceptions_privileged_permanent.csv"],
-    "AC-2(j)": ["access_reviews.csv", "access_review_decisions.csv", "exceptions_access_review.csv"],
+    "AC-2": ["assignments.csv", "exceptions_direct_user.csv", "entra_role_assignments.csv", "exceptions_allowlisted.csv"],
+    "AC-2(j)": ["access_reviews.csv", "access_review_decisions.csv", "exceptions_access_review.csv", "access_reviews_stale.csv"],
+    "AC-6": ["exceptions_privileged_permanent.csv", "exceptions_entra_privileged_permanent.csv", "exceptions_allowlisted.csv"],
     "AC-6(7)": ["privileged_groups.csv", "access_reviews.csv", "exceptions_access_review.csv"],
     "AC-2(7)": ["privileged_groups.csv", "group_members.csv", "exceptions_privileged_group_standing.csv"],
 }
@@ -213,16 +222,28 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         for m in msgs:
             g.gap(m, area)
     warnings = g.warnings + warnings
-    direct, priv_perm = direct_user_exceptions(rows), privileged_permanent_exceptions(rows)
+    entra_perm = [r for r in p2.entra_roles if r["pim_label"] == PERMANENT_ACTIVE]
+    used: set[int] = set()
+    allow = cfg.exception_allowlist
+    direct, ok1 = apply_allowlist(direct_user_exceptions(rows), allow, "exceptions_direct_user.csv", used)
+    priv_perm, ok2 = apply_allowlist(privileged_permanent_exceptions(rows), allow, "exceptions_privileged_permanent.csv", used)
+    entra_perm, ok3 = apply_allowlist(entra_perm, allow, "exceptions_entra_privileged_permanent.csv", used)
+    allowlisted = ok1 + ok2 + ok3
+    warnings += [f"exception_allowlist entry for {e.principal_id} ({e.role or 'any role'}) matched nothing; remove it if stale"
+                 for i, e in enumerate(allow) if i not in used]
     write_csv(run_dir / "assignments.csv", COLUMNS, rows)
     write_csv(run_dir / "exceptions_direct_user.csv", COLUMNS, direct)
     write_csv(run_dir / "exceptions_privileged_permanent.csv", COLUMNS, priv_perm)
+    write_csv(run_dir / "entra_role_assignments.csv", ENTRA_ROLE_COLUMNS, p2.entra_roles)
+    write_csv(run_dir / "exceptions_entra_privileged_permanent.csv", ENTRA_ROLE_COLUMNS, entra_perm)
+    write_csv(run_dir / "exceptions_allowlisted.csv", ALLOWLISTED_COLUMNS, allowlisted)
     write_csv(run_dir / "privileged_groups.csv", GROUP_COLUMNS, p2.groups)
     write_csv(run_dir / "group_members.csv", MEMBER_COLUMNS, p2.members)
     write_csv(run_dir / "exceptions_privileged_group_standing.csv", MEMBER_COLUMNS, p2.standing)
     write_csv(run_dir / "access_reviews.csv", REVIEW_COLUMNS, p2.reviews)
     write_csv(run_dir / "access_review_decisions.csv", DECISION_COLUMNS, p2.decisions)
     write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
+    write_csv(run_dir / "access_reviews_stale.csv", STALE_COLUMNS, p2.stale_reviews)
 
     summary = {
         "assignments_total": len(rows),
@@ -235,6 +256,10 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_direct_user": len(direct),
         "orphaned_for_review": sum(r["direct_user_result"] == "REVIEW" for r in rows),
         "exceptions_privileged_permanent": len(priv_perm),
+        "entra_role_assignments": len(p2.entra_roles),
+        "entra_roles_by_pim_label": _count(p2.entra_roles, "pim_label"),
+        "exceptions_entra_privileged_permanent": len(entra_perm),
+        "exceptions_allowlisted": len(allowlisted),
         "privileged_groups": len(p2.groups),
         "privileged_group_member_rows": len(p2.members),
         "group_members_by_label": _count(p2.members, "label"),
@@ -243,6 +268,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "access_review_decisions": len(p2.decisions),
         "exceptions_access_review": len(p2.review_exceptions),
         "exceptions_access_review_by_reason": _count(p2.review_exceptions, "reason"),
+        "access_reviews_stale": len(p2.stale_reviews),
         "coverage_complete": not g.gaps,
         "coverage_gaps": g.gaps,
         "coverage_gaps_by_area": g.gap_areas,

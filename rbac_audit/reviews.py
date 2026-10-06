@@ -34,6 +34,7 @@ DECISION_COLUMNS = [
     "apply_result", "applied_datetime", "applied_by",
 ]
 EXCEPTION_COLUMNS = ["group_id", "group_name", "reason", "detail", "review_ids"]
+STALE_COLUMNS = ["definition_id", "definition_name", "definition_status", "target_group_id", "detail"]
 REASONS = ["no_review", "frequency_too_low", "overdue", "not_completed", "decisions_not_applied",
            "denied_still_member", "self_review", "default_approve", "coverage_gap"]
 
@@ -102,6 +103,34 @@ def recurrence_text(defn: dict) -> str:
 def _excludes_groups(query: str) -> bool:
     m = re.search(r"principaltype\s+eq\s+'(\w+)'", query)
     return bool(m) and m.group(1) != "group"
+
+
+def review_target_groups(defs: list[dict], now: datetime) -> dict[str, list[dict]]:
+    """group id -> active definitions whose scope or instance enumeration scope names that group (membership or PIM
+    for Groups). Graph sets instanceEnumerationScope to the group itself on single-group reviews; all-groups reviews
+    name no group id there, so they are skipped."""
+    out: dict[str, list[dict]] = {}
+    for d in defs:
+        if not definition_active(d, now)[0]:
+            continue
+        queries = _q(d.get("scope")) + " " + _q(d.get("instanceEnumerationScope"))
+        for gid in dict.fromkeys(re.findall(rf"(?:/groups/|groupid eq ')({_UUID})", queries)):
+            out.setdefault(gid, []).append(d)
+    return out
+
+
+def stale_reviews(targets: dict[str, list[dict]], lookups: dict[str, tuple[int | None, dict | None]]) -> list[dict]:
+    """Rows for active reviews whose target group no longer exists (404), or could not be checked."""
+    rows = []
+    for gid, defs in targets.items():
+        status, _ = lookups.get(gid, (None, None))
+        if status == 200:
+            continue
+        detail = "target group not found (deleted); the review runs against nothing" if status == 404 else \
+            f"target group lookup failed (HTTP {status}); existence not verified"
+        rows += [{"definition_id": d["id"], "definition_name": d.get("displayName", ""), "definition_status": d.get("status", ""),
+                  "target_group_id": gid, "detail": detail} for d in defs]
+    return rows
 
 
 @dataclass

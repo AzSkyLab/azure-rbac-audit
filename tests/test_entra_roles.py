@@ -1,0 +1,163 @@
+"""Entra directory-role inventory, unknown role definitions, allowlist, stale reviews, recycle-bin orphans."""
+import csv
+import dataclasses
+from datetime import datetime, timezone
+
+import pytest
+
+from rbac_audit.api import RawStore
+from rbac_audit.collect import new_run_dir, run_collection
+from rbac_audit.config import AllowEntry, ConfigError, parse_config
+from rbac_audit.entra import directory_role_principals
+from rbac_audit.roles import SENSITIVE_DATA_PLANE, RoleDef, classify_tier
+from conftest import ORPH, TENANT, U1, U2
+from fakes import FakeApi
+
+NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+GA = "62e90394-69f5-4237-9190-012177145e10"
+G2, G3 = "0000000b-0000-0000-0000-000000000002", "0000000b-0000-0000-0000-000000000003"
+HIDDEN = "eb1d8c34-acf5-460d-8424-c1f1a6fbdb85"
+
+
+def run(cfg, mutate=None, **kw):
+    run_dir = new_run_dir(cfg, NOW)
+    raw = RawStore(run_dir / "raw")
+    api = FakeApi(raw, **kw)
+    if mutate:
+        mutate(api.entra)
+    return run_collection(cfg, api, raw, run_dir, {"upn": "a@b"}, NOW).info, run_dir
+
+
+def read(d, name):
+    with open(d / name, newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_entra_role_inventory_labels_from_schedule_instances(cfg):
+    info, d = run(cfg)
+    rows = {(r["principal_id"], r["state"]): r for r in read(d, "entra_role_assignments.csv")}
+    assert rows[(G2, "active")]["pim_label"] == "time_bound_active" and rows[(G2, "active")]["end"] == "2026-03-01T00:00:00Z"
+    assert rows[(U1, "active")]["pim_label"] == "permanent_active" and rows[(U1, "active")]["principal_type"] == "User"
+    assert rows[(G3, "eligible")]["pim_label"] == "eligible"
+    assert all(r["role_name"] == "Global Administrator" for r in rows.values())   # Directory Readers is not privileged
+    exc = read(d, "exceptions_entra_privileged_permanent.csv")
+    assert [(r["principal_id"], r["role_name"]) for r in exc] == [(U1, "Global Administrator")]
+    s = info["summary"]
+    assert s["entra_role_assignments"] == 3 and s["exceptions_entra_privileged_permanent"] == 1
+    assert s["entra_roles_by_pim_label"] == {"eligible": 1, "permanent_active": 1, "time_bound_active": 1}
+    assert "exceptions_entra_privileged_permanent.csv" in s["control_mapping"]["AC-6"]
+
+
+def test_group_inherited_instances_do_not_label_direct_assignments(cfg):
+    # i3 is U2's Activated instance via a group (memberType Group); it must not turn a direct assignment "activated".
+    def add_direct_u2(e):
+        e["dir_roleassignments"].append({"id": "a9", "principalId": U2, "roleDefinitionId": GA, "directoryScopeId": "/"})
+    _, d = run(cfg, mutate=add_direct_u2)
+    u2 = next(r for r in read(d, "entra_role_assignments.csv") if r["principal_id"] == U2)
+    assert u2["pim_label"] == "permanent_active" and u2["principal_type"] == "Guest user"
+
+
+def test_unreadable_schedule_instances_mark_unverified_and_gap(cfg):
+    info, d = run(cfg, graph_errors={"graph_dir_roleassignment_instances": "HTTP 403 Forbidden"})
+    active = [r for r in read(d, "entra_role_assignments.csv") if r["state"] == "active"]
+    assert active and all(r["pim_label"] == "unverified" for r in active)
+    assert read(d, "exceptions_entra_privileged_permanent.csv") == []
+    assert info["summary"]["coverage_complete"] is False
+    assert any("schedules unreadable" in m for m in info["summary"]["coverage_gaps_by_area"]["entra_directory_roles"])
+
+
+def test_unknown_role_definition_is_treated_as_privileged():
+    holders = list(directory_role_principals(
+        [{"principalId": "P", "roleDefinitionId": HIDDEN.upper()}, {"principalId": "Q", "roleDefinitionId": "known-np"}],
+        [], {GA: "Global Administrator"}, known={GA, "known-np"}))
+    assert [(h[0], h[2], h[5]) for h in holders] == [("p", HIDDEN, False)]
+    # Without the set of known ids (legacy call) only isPrivileged roles are yielded.
+    assert list(directory_role_principals([{"principalId": "P", "roleDefinitionId": HIDDEN}], [], {})) == []
+
+
+def test_group_holding_unknown_role_becomes_privileged_with_reason(cfg):
+    def hidden(e):
+        e["dir_roleassignments"].append({"id": "a8", "principalId": G3, "roleDefinitionId": HIDDEN, "directoryScopeId": "/"})
+    _, d = run(cfg, mutate=hidden)
+    g3 = next(r for r in read(d, "privileged_groups.csv") if r["group_id"] == G3)
+    assert "definition not found, treated as privileged" in g3["reasons"]
+    row = next(r for r in read(d, "entra_role_assignments.csv") if r["role_definition_id"] == HIDDEN)
+    assert row["role_privileged"] == "unknown" and row["pim_label"] == "permanent_active"
+
+
+def test_allowlist_moves_rows_with_reason_and_warns_on_unused(cfg):
+    cfg = dataclasses.replace(cfg, exception_allowlist=(
+        AllowEntry(U1, "break-glass account, monitored", role="Global Administrator"),
+        AllowEntry("0000000f-0000-0000-0000-000000000001", "left over"),
+    ))
+    info, d = run(cfg)
+    assert read(d, "exceptions_entra_privileged_permanent.csv") == []
+    ok = read(d, "exceptions_allowlisted.csv")
+    assert [(r["exception_file"], r["principal_id"], r["allowlist_reason"]) for r in ok] == [
+        ("exceptions_entra_privileged_permanent.csv", U1, "break-glass account, monitored")]
+    assert info["summary"]["exceptions_allowlisted"] == 1
+    assert any("0000000f-0000-0000-0000-000000000001" in w and "matched nothing" in w for w in info["warnings"])
+    assert info["config"]["exception_allowlist"][0]["reason"] == "break-glass account, monitored"
+
+
+def test_allowlist_role_and_scope_narrow_the_match():
+    e = AllowEntry(U1, "r", role="Owner", scope="/subscriptions/x/")
+    assert e.matches({"principal_id": U1.upper(), "role_name": "owner", "scope": "/subscriptions/X"})
+    assert not e.matches({"principal_id": U1, "role_name": "Contributor", "scope": "/subscriptions/x"})
+    assert not e.matches({"principal_id": U1, "role_name": "Owner", "scope": "/subscriptions/y"})
+    assert AllowEntry(U1, "r").matches({"principal_id": U1, "role_name": "Anything", "scope": "/"})
+
+
+@pytest.mark.parametrize("entry,msg", [
+    ({"principal_id": "not-a-guid", "reason": "x"}, "principal_id"),
+    ({"principal_id": U1}, "reason is required"),
+    ({"principal_id": U1, "reason": "   "}, "reason is required"),
+    ("oops", "must be a mapping"),
+])
+def test_allowlist_config_validation(cfg, entry, msg):
+    raw = {"tenant_id": TENANT, "privileged_roles": {"privileged_admin": ["Owner"]},
+           "custom_role_privileged_actions": ["*"], "exception_allowlist": [entry]}
+    with pytest.raises(ConfigError, match=msg):
+        parse_config(raw)
+
+
+def test_review_of_deleted_group_is_reported_stale(cfg):
+    info, d = run(cfg)
+    stale = read(d, "access_reviews_stale.csv")
+    assert [(r["definition_id"], r["target_group_id"]) for r in stale] == [
+        ("dddddddd-0000-0000-0000-000000000006", "0000000b-0000-0000-0000-000000000009")]
+    assert "not found" in stale[0]["detail"] and info["summary"]["access_reviews_stale"] == 1
+
+
+def test_soft_deleted_orphan_is_named_but_stays_review(cfg):
+    _, d = run(cfg, deleted={ORPH: {"id": ORPH, "displayName": "id-old-identity", "appId": "app-1"}})
+    rows = [r for r in read(d, "assignments.csv") if r["principal_id"] == ORPH]
+    assert rows and all(r["principal_type"] == "Orphaned" and r["principal_name"] == "id-old-identity"
+                        and r["principal_resolution"] == "soft_deleted" and r["direct_user_result"] == "REVIEW" for r in rows)
+
+
+def test_hard_deleted_orphan_unchanged(cfg):
+    _, d = run(cfg)
+    rows = [r for r in read(d, "assignments.csv") if r["principal_id"] == ORPH]
+    assert rows and all(r["principal_resolution"] == "orphaned" and r["principal_name"] == "" for r in rows)
+
+
+def test_messaging_data_owner_roles_are_sensitive_in_example_config(cfg):
+    for name in ("Azure Event Hubs Data Owner", "Azure Service Bus Data Owner"):
+        tier, _ = classify_tier(RoleDef(guid="x", name=name, role_type="BuiltInRole"), cfg)
+        assert tier == SENSITIVE_DATA_PLANE
+
+
+def test_stale_review_detected_with_graph_single_group_shape(cfg):
+    # Real Graph single-group reviews carry instanceEnumerationScope = that group (v1.0-prefixed queries).
+    gone = "0000000b-0000-0000-0000-000000000008"
+
+    def real_shape(e):
+        e["review_defs"].append({"id": "dddddddd-0000-0000-0000-000000000007", "displayName": "Access Review: sg-gone",
+                                 "status": "InProgress",
+                                 "scope": {"query": f"/v1.0/groups/{gone}/members/microsoft.graph.user", "queryType": "MicrosoftGraph"},
+                                 "instanceEnumerationScope": {"query": f"/v1.0/groups/{gone}", "queryType": "MicrosoftGraph"},
+                                 "settings": {"recurrence": {"pattern": {"type": "absoluteMonthly", "interval": 3}}}})
+    _, d = run(cfg, mutate=real_shape)
+    assert ("dddddddd-0000-0000-0000-000000000007", gone) in {
+        (r["definition_id"], r["target_group_id"]) for r in read(d, "access_reviews_stale.csv")}

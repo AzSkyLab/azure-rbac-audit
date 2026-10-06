@@ -397,6 +397,23 @@
      }
     }
    }
+  },
+  {
+   "id": "dddddddd-0000-0000-0000-000000000006",
+   "displayName": "Review of a deleted group",
+   "status": "InProgress",
+   "scope": {
+    "query": "/groups/0000000b-0000-0000-0000-000000000009/transitiveMembers",
+    "queryType": "MicrosoftGraph"
+   },
+   "settings": {
+    "recurrence": {
+     "pattern": {
+      "type": "absoluteMonthly",
+      "interval": 3
+     }
+    }
+   }
   }
  ],
  "review_instances": {
@@ -548,5 +565,37 @@
     "appliedBy": null
    }
   ]
- }
+ },
+ "dir_roleassignment_instances": [
+  {
+   "id": "i1",
+   "principalId": "0000000b-0000-0000-0000-000000000002",
+   "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+   "directoryScopeId": "/",
+   "assignmentType": "Assigned",
+   "memberType": "Direct",
+   "startDateTime": "2025-12-01T00:00:00Z",
+   "endDateTime": "2026-03-01T00:00:00Z"
+  },
+  {
+   "id": "i2",
+   "principalId": "0000000a-0000-0000-0000-000000000001",
+   "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+   "directoryScopeId": "/",
+   "assignmentType": "Assigned",
+   "memberType": "Direct",
+   "startDateTime": "2024-01-01T00:00:00Z",
+   "endDateTime": null
+  },
+  {
+   "id": "i3",
+   "principalId": "0000000a-0000-0000-0000-000000000002",
+   "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10",
+   "directoryScopeId": "/",
+   "assignmentType": "Activated",
+   "memberType": "Group",
+   "startDateTime": "2026-01-02T00:00:00Z",
+   "endDateTime": "2026-01-02T08:00:00Z"
+  }
+ ]
 }
