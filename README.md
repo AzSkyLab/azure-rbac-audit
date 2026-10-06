@@ -79,6 +79,25 @@ coverage gap (`coverage_gaps_by_area`, `missing_graph_permissions`); exceptions 
 its owner). The manifest records the identity (type, appId/UPN), the Graph token's `roles` / `scp`, and
 `collector_identity_read_only` (false, with a CLI warning, if any granted role or scope contains "Write").
 
+### Creating the collector app registration
+
+`scripts/create-collector-app.sh` sets up the certificate identity in the tenant of the current `az login` session. Run it
+signed in as an admin who can grant admin consent and assign roles at the tenant root management group; it prints the tenant
+ID and asks for confirmation before changing anything.
+
+```
+az login --tenant <tenant id>
+bash scripts/create-collector-app.sh
+```
+
+It creates the single-tenant app `rbac-audit-collector` and its service principal, generates a self-signed RSA-4096
+certificate valid for 365 days (key and cert combined in `~/.config/rbac-audit/rbac-audit-collector.pem`, mode 600, outside
+the repo; the public `.crt` is uploaded as the app's credential), adds the four Graph application permissions above with admin
+consent, and assigns **Reader** at the tenant root management group. Copy the printed `auth:` block into
+`config.local.yaml`. It is a one-time setup, not an updater: on a re-run `az ad app create` patches the existing app of
+that name, and the script then stops at `az ad sp create` because the service principal already exists. Renew the
+certificate before it expires (`az ad app credential reset --id <client id> --cert @<new .crt> --append`).
+
 ### Minimal lab setup to exercise each path live
 
 1. *Group PIM labels:* make a security group `lab-priv` hold Contributor on a resource group (so it is privileged); in Entra PIM >
