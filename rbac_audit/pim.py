@@ -37,10 +37,10 @@ class ActiveIndex:
 def label_active(matches: list[dict]) -> tuple[str, str | None, str | None]:
     """(pim_label, start, end) for an ARG assignment given its matching schedule instances."""
     for m in matches:
-        if m.get("assignmentType") == "Activated":
+        if (m.get("assignmentType") or "").lower() == "activated":
             return ACTIVATED, m.get("startDateTime"), m.get("endDateTime")
     for m in matches:
-        if m.get("assignmentType") == "Assigned" and m.get("endDateTime"):
+        if (m.get("assignmentType") or "").lower() == "assigned" and m.get("endDateTime"):
             return TIME_BOUND_ACTIVE, m.get("startDateTime"), m["endDateTime"]
     start = matches[0].get("startDateTime") if matches else None
     return PERMANENT_ACTIVE, start, None

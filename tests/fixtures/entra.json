@@ -98,7 +98,7 @@
       "userPrincipalName": "user.1@contoso.example",
       "userType": "Member"
      },
-     "assignmentType": "Assigned"
+     "assignmentType": "assigned"
     },
     {
      "id": "ins-1-2-member-Activated",
@@ -114,7 +114,7 @@
       "userPrincipalName": "user.2_partner.example#EXT#@contoso.onmicrosoft.com",
       "userType": "Guest"
      },
-     "assignmentType": "Activated"
+     "assignmentType": "activated"
     },
     {
      "id": "ins-1-5-member-Assigned",
@@ -130,7 +130,7 @@
       "userPrincipalName": "user.5@contoso.example",
       "userType": "Member"
      },
-     "assignmentType": "Assigned"
+     "assignmentType": "assigned"
     },
     {
      "id": "ins-1-1-owner-Assigned",
@@ -146,7 +146,7 @@
       "userPrincipalName": "user.1@contoso.example",
       "userType": "Member"
      },
-     "assignmentType": "Assigned"
+     "assignmentType": "assigned"
     }
    ],
    "eligible": [
@@ -218,7 +218,7 @@
      "principalId": "0000000a-0000-0000-0000-000000000007",
      "accessId": "member",
      "startDateTime": "2025-06-01T00:00:00Z",
-     "endDateTime": null,
+     "endDateTime": "2026-12-31T00:00:00Z",
      "principal": {
       "@odata.type": "#microsoft.graph.user",
       "id": "0000000a-0000-0000-0000-000000000007",
@@ -226,7 +226,7 @@
       "userPrincipalName": "user.7@contoso.example",
       "userType": "Member"
      },
-     "assignmentType": "Assigned"
+     "assignmentType": "assigned"
     }
    ],
    "eligible": []

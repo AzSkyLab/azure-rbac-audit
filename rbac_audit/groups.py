@@ -26,7 +26,7 @@ _BASE = "/v1.0/identityGovernance/privilegedAccess/group"
 def instance_state(inst: dict, eligibility: bool) -> str:
     if eligibility:
         return ELIGIBLE
-    if inst.get("assignmentType") == "Activated":
+    if (inst.get("assignmentType") or "").lower() == "activated":  # PIM for Groups returns lowercase values
         return ACTIVATED
     return TIME_BOUND if inst.get("endDateTime") else PERMANENT
 
@@ -67,7 +67,7 @@ def object_type(obj: dict) -> str:
 class WalkResult:
     rows: list[dict] = field(default_factory=list)
     errors: list[tuple[str, str, str]] = field(default_factory=list)  # (feature, group_id, error)
-    pim_groups: dict[str, str] = field(default_factory=dict)          # group id -> name, groups with PIM schedules
+    pim_groups: dict[str, str] = field(default_factory=dict)          # group id -> name, groups with PIM in use
 
 
 def walk_group(root_id: str, root_name: str, fetch: Fetch, max_depth: int = 10) -> WalkResult:
@@ -88,7 +88,9 @@ def walk_group(root_id: str, root_name: str, fetch: Fetch, max_depth: int = 10) 
             if err:
                 res.errors.append((feature, gid, err))
         pim_ok = e_a is None and e_e is None
-        if assigned or eligible:
+        # Graph lists plain direct members of any group as permanent 'assigned' instances, onboarded or not, so only
+        # eligibility, activation or a time-bound assignment shows that PIM for Groups is actually in use.
+        if eligible or any(instance_state(i, False) != PERMANENT for i in assigned or []):
             res.pim_groups[gid] = gname
 
         entries: dict[tuple[str, str], dict] = {}

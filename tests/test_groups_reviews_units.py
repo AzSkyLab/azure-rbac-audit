@@ -17,6 +17,9 @@ def test_instance_states():
     assert instance_state({"assignmentType": "Assigned", "endDateTime": "x"}, False) == TIME_BOUND
     assert instance_state({"assignmentType": "Activated", "endDateTime": "x"}, False) == ACTIVATED
     assert instance_state({}, True) == ELIGIBLE
+    # PIM for Groups (Graph) returns lowercase values; ARM / directory schedules capitalise them.
+    assert instance_state({"assignmentType": "activated", "endDateTime": "x"}, False) == ACTIVATED
+    assert instance_state({"assignmentType": "assigned", "endDateTime": "x"}, False) == TIME_BOUND
 
 
 @pytest.mark.parametrize("chain,expected", [
@@ -196,3 +199,19 @@ def test_stronger_path_reexpansion_terminates_on_cycles():
 
     res = walk_group(_grp(1), "P", fetch)           # A <-> B cycle with different strengths must not loop forever
     assert any(r["member_type"] == "User" and r["state"] == "permanent" for r in res.rows) and len(res.rows) < 40
+
+
+def test_plain_assigned_members_do_not_mark_a_group_pim_managed():
+    # Graph lists direct members of any group as permanent 'assigned' instances, onboarded or not.
+    fetch, _, _ = diamond_fetch([_inst(1, _user(1), atype="assigned")])
+    assert walk_group(_grp(1), "P", fetch).pim_groups == {}
+
+
+@pytest.mark.parametrize("assigned,eligible", [
+    ([_inst(1, _user(1), atype="activated")], []),
+    ([{**_inst(1, _user(1), atype="assigned"), "endDateTime": "2026-12-31T00:00:00Z"}], []),
+    ([], [_inst(1, _user(1), eligible=True)]),
+])
+def test_eligibility_activation_or_time_bound_marks_a_group_pim_managed(assigned, eligible):
+    fetch, _, _ = diamond_fetch(assigned, eligible)
+    assert walk_group(_grp(1), "P", fetch).pim_groups == {_grp(1): "P"}

@@ -86,7 +86,7 @@ def directory_role_rows(holders: list[tuple], instances: list[dict] | None, prin
     roleAssignmentScheduleInstances (None = unreadable -> 'unverified'); an assignment with no instance is permanent."""
     index: dict[tuple, list[dict]] = {}
     for i in instances or []:
-        if (i.get("memberType") or "Direct") == "Direct":
+        if (i.get("memberType") or "Direct").lower() == "direct":
             index.setdefault(_key(i), []).append(i)
     rows = []
     for pid, state, role, scope, a, found in holders:
