@@ -123,20 +123,27 @@ generated and appended to the app (the old PEM is kept as `*.old` and keeps work
 
 ### Minimal lab setup to exercise each path live
 
-1. *Group PIM labels:* make a security group `lab-priv` hold Contributor on a resource group (so it is privileged); in Entra PIM >
-   Groups > Discover groups > Make managed. Add user A as **eligible** member, user B as **permanent active** member (should hit
-   `exceptions_privileged_group_standing`), user C as **time-bound active** (7 days), have A **activate**, add a permanent **owner**,
-   and nest group `lab-nested` (with user D permanent) as an eligible member of `lab-priv`.
-2. *Entra role path (already in the lab):* a role-assignable group holding a privileged directory role (e.g. Application
-   Administrator), and one holding a non-privileged role (e.g. Directory Readers) to show it is excluded; make a group *eligible*
-   for a privileged role to exercise the eligibility API.
-3. *Access reviews (needs the P2/Governance licence):* (a) quarterly membership review of `lab-priv`, reviewer = an owner who is not a
-   member, auto-apply on; complete one instance denying a user, check the user is removed (otherwise `denied_still_member`);
-   (b) a second review of a different group with *default decision = Approve* and reviewers = *members (self review)* with a yearly
-   recurrence (`default_approve`, `self_review`, `frequency_too_low`); (c) a one-day review left unreviewed for >1 day (`overdue`);
-   (d) a PIM for Groups review and (e) an Azure resource role review (PIM > Azure resources > Access reviews) at the subscription;
-   leave one privileged group with no review (`no_review`).
-4. *Token:* run with `auth.mode: certificate` (or credentials) carrying the permissions above.
+Validated against a live tenant (2026-10); the notes are what the lab actually needed.
+
+1. *Group PIM labels:* make security groups `lab-priv` and `lab-selfrev` hold Contributor on a resource group (so they are
+   privileged). In PIM for Groups, on `lab-priv`: user A **eligible** member, user C **active** member for 7 days, nested group
+   `lab-nested` (user D a plain member) **eligible** member; then A **activates**. Assignments onboard the group; there is no
+   separate "make managed" call. Add user B as a **plain member** (outside PIM) and a plain **owner**: both are standing
+   (`exceptions_privileged_group_standing`). The default PIM for Groups policy forbids *permanent* eligible or active
+   assignments, so use an end date (e.g. 180 days): the label is the same.
+2. *Entra role path:* a role-assignable group holding a privileged directory role (e.g. Application Administrator), one
+   holding a non-privileged role (e.g. Guest Inviter) to show it is excluded, and a principal *eligible* for a privileged role.
+3. *Access reviews (P2 / ID Governance licence):* every reviewed group needs at least one member, otherwise Graph completes the
+   instance at once. (a) quarterly review of `lab-priv`, reviewer a non-member, auto-apply **off**: deny user B and stop the
+   instance (`decisions_not_applied`, `denied_still_member`); (b) annual self-review of `lab-selfrev` (no reviewers) with
+   no-response default Approve (`frequency_too_low`, `self_review`, `default_approve`, `not_completed`); (c) a one-time 1-day
+   review of a third privileged group left unreviewed (`overdue` once it has ended) and (d) a quarterly review of it left open
+   (`not_completed`); (e) an Azure resource role review in the portal (PIM > Azure resources > subscription > Access reviews) for a
+   role the group holds **at the subscription itself** (the portal default excludes access below it); leave one privileged
+   group with no review (`no_review`). Graph rejected Entra directory-role reviews scoped to `roleDefinitions/{id}` and
+   accepted forms limited to users or service principals, which do not cover a group; and creating the ARM review through the
+   API failed in this tenant, so (e) was made in the portal.
+4. *Token:* run with `auth.mode: certificate` carrying the permissions above.
 
 ### Review-evaluation rules
 
