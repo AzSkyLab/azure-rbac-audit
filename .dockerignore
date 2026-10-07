@@ -9,3 +9,7 @@ sql
 scripts
 **/__pycache__
 *.egg-info
+infra
+*.tfvars
+.pytest_cache
+.claude
