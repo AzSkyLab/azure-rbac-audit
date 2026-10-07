@@ -176,7 +176,8 @@ not failures. `--json` prints one JSON line (status, summary counts, manifest ha
 The `Dockerfile` builds a non-root image whose default command is `collect --config /config/config.yaml --publish --json`;
 mount the config there and set `output_dir: /evidence` (or any writable path) in it.
 
-`infra/terraform/` deploys it as a scheduled Azure Container Apps job under a user-assigned managed identity, with the
+`docs/DEPLOY.md` is the step-by-step runbook for a work tenant (identity, permissions, storage, Postgres, image, job,
+first-run checks). `infra/terraform/` deploys it as a scheduled Azure Container Apps job under a user-assigned managed identity, with the
 Reader and Graph permissions, an immutable evidence container, optional PostgreSQL loading and alerting; see its README.
 
 ### Creating the collector app registration
