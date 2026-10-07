@@ -107,3 +107,35 @@ def test_sensitive_data_actions_default_when_key_omitted(cfg):
     raw["tenant_id"] = TENANT
     del raw["custom_role_sensitive_data_actions"]
     assert parse_config(raw).custom_role_sensitive_data_actions == DEFAULT_SENSITIVE_DATA_ACTIONS
+
+
+def _custom(perms):
+    from rbac_audit.roles import parse_roledef
+    return parse_roledef({"id": "/x/roleDefinitions/c", "properties": {"roleName": "c", "type": "CustomRole", "permissions": perms}})
+
+
+@pytest.mark.parametrize("perms,expected", [
+    # notActions fully covering the privileged pattern remove it
+    ([{"actions": ["Microsoft.Authorization/*", "Microsoft.Compute/*"], "notActions": ["Microsoft.Authorization/*"]}], "standard"),
+    # Authorization/* minus writes still grants e.g. elevateAccess/action and deletes: stays privileged
+    ([{"actions": ["Microsoft.Authorization/*"], "notActions": ["Microsoft.Authorization/*/write"]}], "custom_privileged"),
+    ([{"actions": ["Microsoft.Authorization/roleAssignments/*"], "notActions": ["Microsoft.Authorization/roleAssignments/write"]}],
+     "standard"),
+    # a partial exclusion, or "*" minus authorization writes (Contributor-like), stays privileged
+    ([{"actions": ["*"], "notActions": ["Microsoft.Authorization/*/write"]}], "custom_privileged"),
+    ([{"actions": ["Microsoft.Authorization/*"], "notActions": ["Microsoft.Authorization/roleDefinitions/write"]}],
+     "custom_privileged"),
+    # a notAction only applies to its own permission block
+    ([{"actions": ["Microsoft.Compute/*"], "notActions": ["Microsoft.Authorization/*"]},
+      {"actions": ["Microsoft.Authorization/roleAssignments/write"], "notActions": []}], "custom_privileged"),
+])
+def test_not_actions_subtracted_when_they_cover_the_pattern(cfg, perms, expected):
+    assert classify_tier(_custom(perms), cfg)[0] == expected
+
+
+def test_not_data_actions_subtracted(cfg):
+    perms = [{"actions": [], "dataActions": ["Microsoft.KeyVault/vaults/secrets/*"],
+              "notDataActions": ["Microsoft.KeyVault/vaults/secrets/*"]}]
+    assert classify_tier(_custom(perms), cfg)[0] == "standard"
+    perms[0]["notDataActions"] = ["Microsoft.KeyVault/vaults/secrets/delete"]
+    assert classify_tier(_custom(perms), cfg)[0] == "sensitive_data_plane"

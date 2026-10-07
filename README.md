@@ -59,7 +59,8 @@ at the scope). Principals Graph denies are reported as `unresolved`, never `Orph
   resource. An eligible assignment on a single resource whose principal has no active assignment there is not reported.
   This is recorded in the manifest as `known_limitations`.
 - Custom roles are tiered on `actions` (-> `custom_privileged`) and `dataActions` (-> `sensitive_data_plane`, patterns in
-  `custom_role_sensitive_data_actions`). `notActions` / `notDataActions` are not subtracted (conservative).
+  `custom_role_sensitive_data_actions`). A `notActions` / `notDataActions` entry removes a pattern only if it
+  covers the whole pattern within the same permission block (`*` minus `Microsoft.Authorization/*/write` stays privileged).
 - An Entra role definition that Graph does not list (hidden first-party roles, for example) is treated as privileged and
   named by its id (`role_privileged = unknown`), so a holder cannot drop out silently. Microsoft first-party service
   principals holding such roles show up in `exceptions_entra_privileged_permanent.csv`; accept them with the allowlist.
