@@ -169,6 +169,8 @@ class Config:
     inactive_account_days: int = 90  # 0 = do not check privileged accounts for sign-in inactivity / disabled state
     pim_policy: PimPolicyConfig = PimPolicyConfig()
     service_principals: ServicePrincipalConfig = ServicePrincipalConfig()
+    scan_resources: bool = False      # also query PIM eligibility at every resource (closes the resource-scope gap)
+    max_resource_scopes: int = 5000   # cap on those per-resource queries; the rest is a coverage gap
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -178,6 +180,8 @@ class Config:
             "management_groups": list(self.management_groups),
             "include_inherited": self.include_inherited,
             "scan_resource_groups": self.scan_resource_groups,
+            "scan_resources": self.scan_resources,
+            "max_resource_scopes": self.max_resource_scopes,
             "review_frequency_days": self.review_frequency_days,
             "privileged_admin_roles": list(self.privileged_admin_roles),
             "sensitive_data_plane_roles": list(self.sensitive_data_plane_roles),
@@ -218,6 +222,12 @@ def _allowlist(value) -> tuple[AllowEntry, ...]:
             raise ConfigError(f"exception_allowlist[{i}].reason is required (it is the recorded justification)")
         out.append(AllowEntry(pid.lower(), reason, str(e.get("role") or ""), str(e.get("scope") or "")))
     return tuple(out)
+
+
+def _positive_int(value, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(f"{name} must be a positive integer")
+    return value
 
 
 def parse_config(raw: dict) -> Config:
@@ -268,6 +278,8 @@ def parse_config(raw: dict) -> Config:
         management_groups=_strs(scope.get("management_groups"), "scope.management_groups"),
         include_inherited=bool(scope.get("include_inherited", True)),
         scan_resource_groups=bool(scope.get("scan_resource_groups", True)),
+        scan_resources=bool(scope.get("scan_resources", False)),
+        max_resource_scopes=_positive_int(scope.get("max_resource_scopes", 5000), "scope.max_resource_scopes"),
         output_dir=Path(raw.get("output_dir", "evidence")),
         review_frequency_days=freq,
         privileged_admin_roles=admin,
