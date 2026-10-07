@@ -4,6 +4,15 @@ import re
 from conftest import SUB, fixture
 
 
+GOOD_RULES = [  # a well-configured PIM policy: activation gated, no permanent assignments
+    {"id": "Enablement_EndUser_Assignment", "enabledRules": ["MultiFactorAuthentication", "Justification"]},
+    {"id": "Approval_EndUser_Assignment", "setting": {"isApprovalRequired": True}},
+    {"id": "Expiration_EndUser_Assignment", "isExpirationRequired": True, "maximumDuration": "PT8H"},
+    {"id": "Expiration_Admin_Eligibility", "isExpirationRequired": True, "maximumDuration": "P365D"},
+    {"id": "Expiration_Admin_Assignment", "isExpirationRequired": True, "maximumDuration": "P180D"},
+]
+
+
 class FakeApi:
     def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None,
                  deleted=None, users=None, sign_in_forbidden=False):
@@ -59,6 +68,14 @@ class FakeApi:
             return e.get("arm_review_decisions", {}).get(f"{m.group(1)}/{m.group(2)}", []), None
         if m := re.fullmatch(r"(.+)/instances", base):
             return e.get("arm_review_instances", {}).get(m.group(1), []), None
+        if base.endswith("/providers/Microsoft.Authorization/roleManagementPolicyAssignments"):
+            scope = base.split("/providers/Microsoft.Authorization/")[0].lower()
+            if scope in e.get("arm_pim_policies", {}):
+                return e["arm_pim_policies"][scope], None
+            guids = {r["name"] for r in fixture("arm_roledefinitions_builtin.json")["value"]} | \
+                    {r["properties"]["roleDefinitionId"].split("/")[-1] for r in fixture("arg_roleassignments.json")["data"]}
+            return [{"properties": {"roleDefinitionId": f"{scope}/providers/Microsoft.Authorization/roleDefinitions/{g}",
+                                    "policyId": f"policy-{g}", "effectiveRules": GOOD_RULES}} for g in sorted(guids)], None
         if base.endswith("/providers/Microsoft.Authorization/accessReviewScheduleDefinitions"):
             return e.get("arm_review_defs", {}).get(base.split("/providers/Microsoft.Authorization/")[0].lower(), []), None
         raise AssertionError(f"unrouted ARM path {path}")
@@ -118,6 +135,13 @@ class FakeApi:
         if m := re.fullmatch(r"/v1.0/identityGovernance/privilegedAccess/group/(assignment|eligibility)ScheduleInstances", base):
             gid = re.search(r"groupId eq '([^']+)'", path).group(1)
             return e["groups"].get(gid, {}).get("assigned" if m.group(1) == "assignment" else "eligible", []), None
+        if base == "/v1.0/policies/roleManagementPolicyAssignments":
+            if m := re.search(r"scopeId eq '([^']+)' and scopeType eq 'Group'", path):
+                return e.get("group_pim_policies", {}).get(m.group(1), [
+                    {"roleDefinitionId": a, "policyId": f"gp-{a}", "policy": {"rules": GOOD_RULES}} for a in ("member", "owner")]), None
+            return e.get("dir_pim_policies", [
+                {"roleDefinitionId": d["id"], "policyId": f"dp-{d['id']}", "policy": {"rules": GOOD_RULES}}
+                for d in e["dir_roledefinitions"]]), None
         if base == "/v1.0/identityGovernance/accessReviews/definitions":
             return e["review_defs"], None
         if m := re.fullmatch(r"/v1.0/identityGovernance/accessReviews/definitions/([^/]+)/instances", base):

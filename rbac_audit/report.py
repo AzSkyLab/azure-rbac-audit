@@ -15,6 +15,9 @@ SECTIONS = [
     ("Standing privileged Entra roles", "AC-6", "exceptions_entra_privileged_permanent.csv",
      ["role_name", "principal_type", "principal_name", "principal_upn_or_appid", "role_privileged"],
      "Privileged Entra directory roles held permanently."),
+    ("Weak PIM activation settings", "AC-6(1)", "exceptions_pim_policy.csv",
+     ["target_type", "target", "role_name", "scope", "reason", "detail"],
+     "PIM policies for privileged access that do not gate activation as configured under pim_policy."),
     ("Roles assigned directly to users", "AC-2", "exceptions_direct_user.csv",
      ["role_name", "scope", "principal_type", "principal_name", "principal_upn_or_appid", "pim_label"],
      "Azure roles held by a user or guest instead of a group."),
@@ -81,7 +84,7 @@ def render(info: dict, tables: dict[str, list[dict]]) -> str:
     who = ident.get("upn") or ident.get("app_id") or ident.get("object_id") or "unknown"
     tiles = [("Assignments", s.get("assignments_total")), ("Privileged groups", s.get("privileged_groups")),
              ("Entra role holders", s.get("entra_role_assignments"))]
-    tiles += [(title, len(tables.get(csv_name, []))) for title, _, csv_name, _, _ in SECTIONS[:6]]
+    tiles += [(title, len(tables.get(csv_name, []))) for title, _, csv_name, _, _ in SECTIONS[:7]]
     out = [
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
         '<meta name=viewport content="width=device-width,initial-scale=1">',

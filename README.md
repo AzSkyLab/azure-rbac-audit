@@ -30,6 +30,7 @@ Each run writes `evidence/<UTC timestamp>/`:
 | `access_reviews_stale.csv` | active reviews whose target group no longer exists (or could not be checked) |
 | `exceptions_access_review.csv` | one row per group per reason: `no_review`, `frequency_too_low`, `overdue`, `not_completed`, `decisions_not_applied`, `denied_still_member`, `self_review`, `default_approve`, or `coverage_gap` when review data could not be read |
 | `inactive_privileged_accounts.csv` | privileged users that are disabled, pending guests, never signed in or inactive (AC-2(3)) |
+| `pim_policies.csv`, `exceptions_pim_policy.csv` | PIM activation settings for privileged access, and where they fall short of `pim_policy` (AC-6(1)) |
 | `changes.csv` | privileged access added, removed or changed since the previous fully covered run |
 | `report.html` | one self-contained page summarising the run for reviewers |
 | `manifest.json` | status (`complete`/`failed`), run time, signed-in identity, tenant, scopes, tool version, call log, warnings, coverage, SHA-256 of every file |
@@ -84,7 +85,8 @@ A review with no reviewers (or ARM `reviewersType: Self`), in any stage, is a se
 
 **Permissions (all read-only).** Application permissions on the collector's app registration (admin consent):
 `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` (covers both group PIM schedule
-APIs), `AccessReview.Read.All`, `AuditLog.Read.All` (sign-in dates for the inactive-account check; needs Entra ID P1+); plus
+APIs), `AccessReview.Read.All`, `AuditLog.Read.All` (sign-in dates for the inactive-account check; needs Entra ID P1+),
+`RoleManagementPolicy.Read.AzureADGroup` (PIM for Groups policies); plus
 Azure **Reader** at the tenant root management group (ARM/Resource Graph). With
 `auth.mode: cli` the same names apply as delegated scopes, and the Azure CLI token does **not** carry
 `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` or `AccessReview.Read.All`. Any 403 is recorded as a
@@ -98,7 +100,19 @@ ownership of a privileged group, eligible included) is checked: `disabled` (acco
 `never_signed_in` and `inactive` (latest interactive, non-interactive or successful sign-in older than
 `inactive_account_days`, default 90; accounts newer than that are not judged). One row per user per reason, with every
 privileged access path listed. Without `AuditLog.Read.All` the first two still run and the sign-in checks are a coverage
-gap; `inactive_account_days: 0` turns the check off. Service principals are not covered.
+gap; `inactive_account_days: 0` turns the check off. Service principals are not covered. Microsoft refreshes
+`signInActivity` with a delay, so a very recent sign-in may not show yet.
+
+### PIM policy settings (`pim_policies.csv`, `exceptions_pim_policy.csv`, AC-6(1))
+
+Eligibility only protects anything if activation is gated. For every privileged Azure role at each scope where it is
+assigned (ARM `roleManagementPolicyAssignments`, effective rules; the tenant root `/` is not a PIM scope), every privileged
+Entra role with a holder, and the member and owner policies of every PIM-managed privileged group (Graph), the tool records
+whether activation needs MFA (or an authentication context), a justification and approval, its maximum duration, and
+whether permanent eligible / active assignments are allowed, and reports what falls short of `pim_policy` in the config
+(`activation_mfa_not_required`, `activation_justification_not_required`, `activation_approval_not_required`,
+`activation_too_long`, `permanent_eligibility_allowed`, `permanent_active_assignment_allowed`). Azure's default role
+settings do not require MFA on activation.
 
 ### Changes since the previous run (`changes.csv`)
 
@@ -163,7 +177,7 @@ bash scripts/create-collector-app.sh
 
 It creates the single-tenant app `rbac-audit-collector` and its service principal, generates a self-signed RSA-4096
 certificate valid for 365 days (key and cert combined in `~/.config/rbac-audit/rbac-audit-collector.pem`, mode 600, outside
-the repo; the public `.crt` is uploaded as the app's credential), adds the five Graph application permissions above with admin
+the repo; the public `.crt` is uploaded as the app's credential), adds the six Graph application permissions above with admin
 consent, and assigns **Reader** at the tenant root management group. Copy the printed `auth:` block into
 `config.local.yaml`. It is safe to re-run: each step checks what exists (app, service principal, certificate registered
 on the app by thumbprint, permissions, admin consent, Reader) and only adds what is missing, printing which. Re-run it to

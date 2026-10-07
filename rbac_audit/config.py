@@ -49,6 +49,39 @@ class PublishConfig:
         return dict(self.__dict__)
 
 
+@dataclass(frozen=True)
+class PimPolicyConfig:
+    """What a PIM policy for privileged access must enforce (pim_policy: in the config)."""
+    enabled: bool = True
+    require_mfa: bool = True
+    require_justification: bool = True
+    require_approval: bool = False
+    max_activation_hours: float = 8
+    allow_permanent_eligible: bool = False
+    allow_permanent_active: bool = False
+
+    def public_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def _pim_policy(raw) -> PimPolicyConfig:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("pim_policy must be a mapping")
+    unknown = set(raw) - set(PimPolicyConfig.__dataclass_fields__)
+    if unknown:
+        raise ConfigError(f"pim_policy: unknown setting(s) {', '.join(sorted(unknown))}")
+    kw = {}
+    for k, v in raw.items():
+        if k == "max_activation_hours":
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                raise ConfigError("pim_policy.max_activation_hours must be a positive number")
+        elif not isinstance(v, bool):
+            raise ConfigError(f"pim_policy.{k} must be true or false")
+        kw[k] = v
+    return PimPolicyConfig(**kw)
+
+
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
@@ -108,6 +141,7 @@ class Config:
     exception_allowlist: tuple[AllowEntry, ...] = ()
     publish: PublishConfig = PublishConfig()
     inactive_account_days: int = 90  # 0 = do not check privileged accounts for sign-in inactivity / disabled state
+    pim_policy: PimPolicyConfig = PimPolicyConfig()
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -128,6 +162,7 @@ class Config:
             "exception_allowlist": [e.public_dict() for e in self.exception_allowlist],
             "publish": self.publish.public_dict(),
             "inactive_account_days": self.inactive_account_days,
+            "pim_policy": self.pim_policy.public_dict(),
         }
 
 
@@ -217,6 +252,7 @@ def parse_config(raw: dict) -> Config:
         exception_allowlist=_allowlist(raw.get("exception_allowlist")),
         publish=_publish(raw.get("publish")),
         inactive_account_days=inactive,
+        pim_policy=_pim_policy(raw.get("pim_policy")),
     )
 
 

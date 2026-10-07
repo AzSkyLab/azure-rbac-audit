@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from . import activity, changes, report
+from . import activity, changes, pim_policy, report
 from .api import AzureApi, RawStore
 from .config import Config
 from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
@@ -166,6 +166,7 @@ CONTROL_MAPPING = {
     "AC-2": ["assignments.csv", "exceptions_direct_user.csv", "entra_role_assignments.csv", "exceptions_allowlisted.csv"],
     "AC-2(j)": ["access_reviews.csv", "access_review_decisions.csv", "exceptions_access_review.csv", "access_reviews_stale.csv"],
     "AC-6": ["exceptions_privileged_permanent.csv", "exceptions_entra_privileged_permanent.csv", "exceptions_allowlisted.csv"],
+    "AC-6(1)": ["pim_policies.csv", "exceptions_pim_policy.csv"],
     "AC-6(7)": ["privileged_groups.csv", "access_reviews.csv", "exceptions_access_review.csv"],
     "AC-2(7)": ["privileged_groups.csv", "group_members.csv", "exceptions_privileged_group_standing.csv"],
     "AC-2(3)": ["inactive_privileged_accounts.csv"],
@@ -237,6 +238,15 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         p2.missing_permissions |= inactive.missing_permissions
         for m in inactive.gaps:
             p2.gaps.setdefault("sign_in_activity", []).append(m)
+    policy = pim_policy.PolicyResult()
+    if cfg.pim_policy.enabled:
+        try:
+            policy = pim_policy.check_policies(api, cfg.pim_policy, rows, p2.entra_roles, p2.groups)
+        except Exception as e:  # noqa: BLE001
+            policy.gaps.append(f"PIM policy check aborted: {type(e).__name__}: {e}")
+        p2.missing_permissions |= policy.missing_permissions
+        for m in policy.gaps:
+            p2.gaps.setdefault("pim_policies", []).append(m)
     for area, msgs in p2.gaps.items():
         for m in msgs:
             g.gap(m, area)
@@ -264,6 +274,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
     write_csv(run_dir / "access_reviews_stale.csv", STALE_COLUMNS, p2.stale_reviews)
     write_csv(run_dir / "inactive_privileged_accounts.csv", activity.COLUMNS, inactive.rows)
+    write_csv(run_dir / "pim_policies.csv", pim_policy.POLICY_COLUMNS, policy.policies)
+    write_csv(run_dir / "exceptions_pim_policy.csv", pim_policy.EXCEPTION_COLUMNS, policy.exceptions)
     since, delta = _changes(cfg, api, run_dir, warnings)
     write_csv(run_dir / "changes.csv", changes.COLUMNS, delta)
 
@@ -293,6 +305,9 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "access_reviews_stale": len(p2.stale_reviews),
         "inactive_privileged_accounts": len({r["principal_id"] for r in inactive.rows}),
         "inactive_privileged_by_reason": _count(inactive.rows, "reason"),
+        "pim_policies_checked": len(policy.policies),
+        "exceptions_pim_policy": len(policy.exceptions),
+        "exceptions_pim_policy_by_reason": _count(policy.exceptions, "reason"),
         "changes_since": since,
         "changes": {f"{r['source']}:{r['change']}": n for r, n in _tally(delta)},
         "coverage_complete": not g.gaps,
@@ -309,7 +324,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_direct_user.csv": direct, "inactive_privileged_accounts.csv": inactive.rows,
         "exceptions_privileged_group_standing.csv": p2.standing, "exceptions_access_review.csv": p2.review_exceptions,
         "access_reviews_stale.csv": p2.stale_reviews, "exceptions_allowlisted.csv": allowlisted,
-        "changes.csv": delta,
+        "changes.csv": delta, "exceptions_pim_policy.csv": policy.exceptions,
     }), encoding="utf-8")
     return RunResult(run_dir, info, write_manifest(run_dir, info))
 

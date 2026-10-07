@@ -72,6 +72,17 @@ exception_allowlist: []
 # (sign-in dates need AuditLog.Read.All). 0 turns the check off.
 inactive_account_days: 90
 
+# What PIM policies for privileged access must enforce (Azure roles where assigned, privileged Entra roles with a
+# holder, PIM-managed privileged groups). Findings go to exceptions_pim_policy.csv.
+pim_policy:
+  enabled: true
+  require_mfa: true               # MFA or an authentication context on activation
+  require_justification: true
+  require_approval: false
+  max_activation_hours: 8
+  allow_permanent_eligible: false
+  allow_permanent_active: false
+
 # Phase 2: privileged groups, PIM for Groups membership and access reviews (Microsoft Graph).
 entra:
   enabled: true
@@ -94,7 +105,8 @@ entra:
 # eligibility and access-review permissions, so phase 2 reports coverage gaps). For full coverage use an app
 # registration with a certificate (no secret in this file; keep the PEM, private key included, at mode 600):
 #   Graph APPLICATION permissions (admin consent): Directory.Read.All, RoleManagement.Read.Directory,
-#   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All, AuditLog.Read.All; Azure RBAC: Reader at the tenant root
+#   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All, AuditLog.Read.All, RoleManagementPolicy.Read.AzureADGroup;
+#   Azure RBAC: Reader at the tenant root
 #   management group.
 # auth:
 #   mode: certificate                       # cli | certificate | managed_identity (client_id = user-assigned MI)

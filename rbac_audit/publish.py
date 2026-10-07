@@ -72,7 +72,7 @@ TABLE_FILES = [
     "exceptions_entra_privileged_permanent.csv", "exceptions_allowlisted.csv", "privileged_groups.csv",
     "group_members.csv", "exceptions_privileged_group_standing.csv", "access_reviews.csv",
     "access_review_decisions.csv", "exceptions_access_review.csv", "access_reviews_stale.csv",
-    "inactive_privileged_accounts.csv", "changes.csv",
+    "inactive_privileged_accounts.csv", "changes.csv", "pim_policies.csv", "exceptions_pim_policy.csv",
 ]
 
 
