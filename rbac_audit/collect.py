@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from . import activity, report
+from . import activity, changes, report
 from .api import AzureApi, RawStore
 from .config import Config
 from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
@@ -264,6 +264,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
     write_csv(run_dir / "access_reviews_stale.csv", STALE_COLUMNS, p2.stale_reviews)
     write_csv(run_dir / "inactive_privileged_accounts.csv", activity.COLUMNS, inactive.rows)
+    since, delta = _changes(cfg, api, run_dir, warnings)
+    write_csv(run_dir / "changes.csv", changes.COLUMNS, delta)
 
     summary = {
         "assignments_total": len(rows),
@@ -291,6 +293,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "access_reviews_stale": len(p2.stale_reviews),
         "inactive_privileged_accounts": len({r["principal_id"] for r in inactive.rows}),
         "inactive_privileged_by_reason": _count(inactive.rows, "reason"),
+        "changes_since": since,
+        "changes": {f"{r['source']}:{r['change']}": n for r, n in _tally(delta)},
         "coverage_complete": not g.gaps,
         "coverage_gaps": g.gaps,
         "coverage_gaps_by_area": g.gap_areas,
@@ -305,6 +309,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_direct_user.csv": direct, "inactive_privileged_accounts.csv": inactive.rows,
         "exceptions_privileged_group_standing.csv": p2.standing, "exceptions_access_review.csv": p2.review_exceptions,
         "access_reviews_stale.csv": p2.stale_reviews, "exceptions_allowlisted.csv": allowlisted,
+        "changes.csv": delta,
     }), encoding="utf-8")
     return RunResult(run_dir, info, write_manifest(run_dir, info))
 
@@ -325,6 +330,29 @@ def run_collection(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, ide
         if isinstance(e, Exception):
             raise CollectionFailed(failed, e) from e
         raise
+
+
+def _changes(cfg: Config, api, run_dir: Path, warnings: list[str]) -> tuple[str | None, list[dict]]:
+    """(baseline run id, change rows) against the previous complete, fully covered run: local first, then the publish
+    container. Supplementary: a failure is a warning, not a coverage gap."""
+    try:
+        base = changes.local_baseline(cfg.output_dir, run_dir.name)
+        if base is None and cfg.publish.storage_account_url:
+            container = api.evidence_container(cfg.publish.storage_account_url, cfg.publish.storage_container)
+            base = changes.blob_baseline(container, cfg.publish.storage_prefix, run_dir.name)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"changes since the previous run not computed: {type(e).__name__}: {e}")
+        return None, []
+    if base is None:
+        return None, []
+    return base[0], changes.diff(base[1], changes.read_tables(run_dir))
+
+
+def _tally(rows: list[dict]):
+    out: dict[tuple, int] = {}
+    for r in rows:
+        out[(r["source"], r["change"])] = out.get((r["source"], r["change"]), 0) + 1
+    return [({"source": s, "change": c}, n) for (s, c), n in sorted(out.items())]
 
 
 def _count(rows: list[dict], key: str) -> dict:

@@ -56,6 +56,7 @@ class RawStore:
 
 class AzureApi:
     def __init__(self, credential, raw: RawStore):
+        self.credential = credential
         self.tokens = TokenCache(credential)
         self.raw = raw
         self._sleep = time.sleep
@@ -201,6 +202,11 @@ class AzureApi:
             self._sleep(wait)
             pending = retry
         return out
+
+    def evidence_container(self, account_url: str, container: str):
+        """The publish blob container, used here only to *read* the previous run (list + download) for changes.csv."""
+        from azure.storage.blob import ContainerClient
+        return ContainerClient(account_url, container, credential=self.credential)
 
     def parallel(self, fn, args, workers: int = 8):
         with ThreadPoolExecutor(max_workers=workers) as pool:

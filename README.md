@@ -29,6 +29,9 @@ Each run writes `evidence/<UTC timestamp>/`:
 | `access_reviews.csv`, `access_review_decisions.csv` | covering access reviews per privileged group and their decisions |
 | `access_reviews_stale.csv` | active reviews whose target group no longer exists (or could not be checked) |
 | `exceptions_access_review.csv` | one row per group per reason: `no_review`, `frequency_too_low`, `overdue`, `not_completed`, `decisions_not_applied`, `denied_still_member`, `self_review`, `default_approve`, or `coverage_gap` when review data could not be read |
+| `inactive_privileged_accounts.csv` | privileged users that are disabled, pending guests, never signed in or inactive (AC-2(3)) |
+| `changes.csv` | privileged access added, removed or changed since the previous fully covered run |
+| `report.html` | one self-contained page summarising the run for reviewers |
 | `manifest.json` | status (`complete`/`failed`), run time, signed-in identity, tenant, scopes, tool version, call log, warnings, coverage, SHA-256 of every file |
 | `manifest.sha256` | `sha256sum`-format digest of `manifest.json` (also printed at the end of the run; record it out-of-band) |
 
@@ -96,6 +99,16 @@ ownership of a privileged group, eligible included) is checked: `disabled` (acco
 `inactive_account_days`, default 90; accounts newer than that are not judged). One row per user per reason, with every
 privileged access path listed. Without `AuditLog.Read.All` the first two still run and the sign-in checks are a coverage
 gap; `inactive_account_days: 0` turns the check off. Service principals are not covered.
+
+### Changes since the previous run (`changes.csv`)
+
+Each run is compared with the newest earlier run that is complete, had complete coverage and still matches its manifest
+(so a coverage gap is never reported as access appearing or disappearing): privileged assignments, Entra role holders,
+privileged groups, group members and owners, access review exceptions and inactive accounts are reported as `added`,
+`removed` or `changed` (PIM label, tier, membership label, group reasons). The baseline is looked up in `output_dir`, then,
+for ephemeral runners, in the `publish.storage` container (read only; each CSV is checked against that run's manifest
+hash). `summary.changes_since` names the baseline. `rbac-audit diff <old> <new>` compares any two local runs, and
+`sql/schema.sql` provides `rbac_audit.row_keys` and `rbac_audit.latest_changes` for the Postgres copy.
 
 ### Accepted exceptions (`exception_allowlist`)
 

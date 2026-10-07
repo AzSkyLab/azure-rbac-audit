@@ -54,6 +54,21 @@ def _publish_cmd(args) -> int:
     return EXIT_OK
 
 
+def _diff_cmd(args) -> int:
+    """Changes between two local evidence folders, as CSV on stdout. Both must still match their manifests."""
+    import csv as _csv
+    from .changes import COLUMNS, diff, read_tables
+    from .manifest import verify_manifest
+    for d in (args.old, args.new):
+        if verify_manifest(Path(d)):
+            print(f"{d} does not match its manifest; refusing to compare", file=sys.stderr)
+            return EXIT_CONFIG
+    w = _csv.DictWriter(sys.stdout, fieldnames=COLUMNS)
+    w.writeheader()
+    w.writerows(diff(read_tables(Path(args.old)), read_tables(Path(args.new))))
+    return EXIT_OK
+
+
 def _collect_cmd(args) -> int:
     loaded = _load(args)
     if not loaded:
@@ -135,6 +150,10 @@ def main(argv=None) -> int:
     pb.add_argument("--config", required=True)
     pb.add_argument("--run", required=True, help="evidence folder, e.g. evidence/20261007T002813Z")
     pb.set_defaults(fn=_publish_cmd)
+    df = sub.add_parser("diff", help="privileged access changes between two evidence folders (CSV on stdout)")
+    df.add_argument("old")
+    df.add_argument("new")
+    df.set_defaults(fn=_diff_cmd)
     args = p.parse_args(argv)
     return args.fn(args)
 

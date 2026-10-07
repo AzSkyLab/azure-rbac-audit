@@ -25,6 +25,38 @@ CREATE TABLE IF NOT EXISTS rbac_audit.run_rows (
 );
 CREATE INDEX IF NOT EXISTS run_rows_source ON rbac_audit.run_rows (source, run_id);
 
+-- Row identity per source, the same keys as rbac_audit/changes.py, so runs can be compared.
+CREATE OR REPLACE VIEW rbac_audit.row_keys AS
+SELECT r.run_id, r.source, r.data,
+       CASE r.source
+           WHEN 'assignments'                  THEN lower(r.data->>'assignment_id')
+           WHEN 'entra_role_assignments'       THEN concat_ws('|', r.data->>'assignment_id', r.data->>'state')
+           WHEN 'privileged_groups'            THEN r.data->>'group_id'
+           WHEN 'group_members'                THEN concat_ws('|', r.data->>'privileged_group_id', r.data->>'member_id', r.data->>'access')
+           WHEN 'exceptions_access_review'     THEN concat_ws('|', r.data->>'group_id', r.data->>'reason')
+           WHEN 'inactive_privileged_accounts' THEN concat_ws('|', r.data->>'principal_id', r.data->>'reason')
+       END AS key
+FROM rbac_audit.run_rows r
+WHERE r.source IN ('assignments', 'entra_role_assignments', 'privileged_groups', 'group_members',
+                   'exceptions_access_review', 'inactive_privileged_accounts');
+
+-- Added / removed rows between the two newest fully covered runs (each run also carries its own changes.csv rows,
+-- source = 'changes', computed by the collector with field-level detail).
+CREATE OR REPLACE VIEW rbac_audit.latest_changes AS
+WITH ranked AS (
+    SELECT run_id, row_number() OVER (ORDER BY run_id DESC) AS n FROM rbac_audit.runs WHERE coverage_complete
+), cur AS (
+    SELECT k.* FROM rbac_audit.row_keys k JOIN ranked r ON r.run_id = k.run_id AND r.n = 1
+), prev AS (
+    SELECT k.* FROM rbac_audit.row_keys k JOIN ranked r ON r.run_id = k.run_id AND r.n = 2
+)
+SELECT coalesce(cur.source, prev.source) AS source,
+       CASE WHEN prev.key IS NULL THEN 'added' ELSE 'removed' END AS change,
+       coalesce(cur.key, prev.key) AS key,
+       coalesce(cur.data, prev.data) AS data
+FROM cur FULL OUTER JOIN prev ON cur.source = prev.source AND cur.key = prev.key
+WHERE cur.key IS NULL OR prev.key IS NULL;
+
 -- Grant the collector (Entra principal name of the managed identity, created with pgaadauth_create_principal):
 --   SELECT * FROM pgaadauth_create_principal('<identity name>', false, false);
 --   GRANT USAGE ON SCHEMA rbac_audit TO "<identity name>";

@@ -30,6 +30,9 @@ SECTIONS = [
     ("Access reviews of deleted groups", "AC-2(j)", "access_reviews_stale.csv",
      ["definition_name", "target_group_id", "detail"],
      "Active reviews whose target group no longer exists."),
+    ("Changes since the previous run", "", "changes.csv",
+     ["source", "change", "principal", "access", "field", "before", "after"],
+     "Privileged access added, removed or changed against the previous complete, fully covered run."),
     ("Accepted exceptions", "", "exceptions_allowlisted.csv",
      ["exception_file", "principal_name", "role_name", "scope", "allowlist_reason"],
      "Exceptions accepted through exception_allowlist, with the recorded reason."),
@@ -102,6 +105,9 @@ def render(info: dict, tables: dict[str, list[dict]]) -> str:
     for title, control, csv_name, columns, why in SECTIONS:
         rows = tables.get(csv_name, [])
         tag = f' <span class="badge {"warn" if rows else "ok"}">{len(rows)}</span>'
+        if csv_name == "changes.csv":
+            since = s.get("changes_since")
+            why = f"{why} Baseline run: {since}." if since else "No earlier complete, fully covered run to compare with."
         out.append(f"<h2>{escape(title)}{tag}</h2><p class=muted>{escape(why)}"
                    f"{(' Control ' + escape(control) + '.') if control else ''} Full data: {escape(csv_name)}.</p>")
         out.append(_table(columns, rows) if rows else "<p>None.</p>")
