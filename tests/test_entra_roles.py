@@ -272,3 +272,39 @@ def test_unreadable_arm_reviews_are_a_gap(cfg):
     assert s["coverage_complete"] is False
     assert any("Azure role access reviews unreadable" in m for m in s["coverage_gaps_by_area"]["access_reviews"])
     assert not any("Reader" in p for p in s["missing_graph_permissions"])
+
+
+def portal_arm_review(below):
+    """Shape of a review created in the portal (PIM > Azure resources > subscription > Access reviews), sanitized."""
+    return {"id": f"{SUBSCOPE}/providers/Microsoft.Authorization/accessReviewScheduleDefinitions/portal-1", "name": "portal-1",
+            "properties": {"displayName": "az review test", "status": "NotStarted", "reviewersType": "Assigned",
+                           "reviewers": [{"principalId": U1, "principalType": "user"}],
+                           "scope": {"assignmentState": None, "excludeResourceId": "", "excludeRoleDefinitionId": "",
+                                     "expandNestedMemberships": True, "inactiveDuration": None,
+                                     "includeAccessBelowResource": below, "includeInheritedAccess": False,
+                                     "principalType": "user", "resourceId": SUBSCOPE,
+                                     "roleDefinitionId": f"{SUBSCOPE}/providers/Microsoft.Authorization/roleDefinitions/{CONTRIBUTOR}"},
+                           "settings": {"recurrence": {"pattern": {"interval": 3, "type": "absoluteMonthly"},
+                                                       "range": {"endDate": "2027-01-08T01:22:35.458+00:00", "numberOfOccurrences": 0,
+                                                                 "startDate": "2026-10-07T00:26:26.975+00:00", "type": "endDate"}},
+                                        "defaultDecisionEnabled": False, "autoApplyDecisionsEnabled": False,
+                                        "instanceDurationInDays": 25}}}
+
+
+@pytest.mark.parametrize("below,scope,covered", [
+    (False, SUBSCOPE, True),                                  # role held at the reviewed subscription itself
+    (False, f"{SUBSCOPE}/resourceGroups/rg-app", False),      # portal default: access below the resource not reviewed
+    (True, f"{SUBSCOPE}/resourceGroups/rg-app", True),
+])
+def test_portal_arm_review_users_with_nested_expansion_cover_groups(below, scope, covered):
+    from rbac_audit.reviews import covering_reviews, from_arm_definition, interval_days
+    d = from_arm_definition(portal_arm_review(below))
+    assert interval_days(d) == 90
+    assert bool(covering_reviews(G1, [(scope, CONTRIBUTOR)], [d], {})) is covered
+
+
+def test_users_only_review_without_nested_expansion_does_not_cover_groups():
+    from rbac_audit.reviews import covering_reviews, from_arm_definition
+    item = portal_arm_review(True)
+    item["properties"]["scope"]["expandNestedMemberships"] = False
+    assert not covering_reviews(G1, [(SUBSCOPE, CONTRIBUTOR)], [from_arm_definition(item)], {})

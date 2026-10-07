@@ -155,7 +155,8 @@ def from_arm_definition(item: dict) -> dict:
                            + (f"?$filter=({' and '.join(filters)})" if filters else "")},
         "reviewers": reviewers, "settings": p.get("settings") or {},
         "_arm": {"resource": resource.lower(), "role": role, "principal_type": (sc.get("principalType") or "").lower(),
-                 "below": sc.get("includeAccessBelowResource") is not False},
+                 "below": sc.get("includeAccessBelowResource") is not False,
+                 "nested": bool(sc.get("expandNestedMemberships"))},
     }
 
 
@@ -218,7 +219,10 @@ def covering_reviews(group_id: str, role_scopes: list, defs: list[dict], instanc
         insts = instances_by_def.get(d["id"], [])
         arm = d.get("_arm")
         if arm:
-            if arm["principal_type"] and "group" not in arm["principal_type"]:
+            # The portal's default is principalType 'user' with expandNestedMemberships: users who hold the role
+            # through a group are reviewed, which reviews that group's membership-derived access.
+            pt = arm["principal_type"]
+            if pt and "group" not in pt and not (arm["nested"] and "user" in pt):
                 continue
             if any(_under(s, arm["resource"], arm["below"]) and (not arm["role"] or g == arm["role"]) for s, g in scopes):
                 out.append(Coverage(gid, d, insts, "azure_resource_role", "azure_role_scope"))
