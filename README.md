@@ -121,6 +121,9 @@ Exit codes for schedulers: `0` complete and conclusive, `1` collection failed (s
 mismatch, `3` complete but coverage incomplete, `4` publish failed (evidence kept locally). Exceptions found are findings,
 not failures. `--json` prints one JSON line (status, summary counts, manifest hash, publish result) for log pipelines.
 
+The `Dockerfile` builds a non-root image whose default command is `collect --config /config/config.yaml --publish --json`;
+mount the config there and set `output_dir: /evidence` (or any writable path) in it.
+
 ### Creating the collector app registration
 
 `scripts/create-collector-app.sh` sets up the certificate identity in the tenant of the current `az login` session. Run it

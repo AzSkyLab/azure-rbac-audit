@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+evidence
+config.local.yaml
+NEXT-SESSION.md
+tests
+sql
+scripts
+**/__pycache__
+*.egg-info
