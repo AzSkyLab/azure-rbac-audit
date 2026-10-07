@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from . import activity
+from . import activity, report
 from .api import AzureApi, RawStore
 from .config import Config
 from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
@@ -300,6 +300,12 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     }
     info = {**_base_info(cfg, identity, started, raw, "complete"), "scopes": g.scopes, "summary": summary,
             "warnings": warnings, "known_limitations": KNOWN_LIMITATIONS}
+    (run_dir / "report.html").write_text(report.render(info, {
+        "exceptions_privileged_permanent.csv": priv_perm, "exceptions_entra_privileged_permanent.csv": entra_perm,
+        "exceptions_direct_user.csv": direct, "inactive_privileged_accounts.csv": inactive.rows,
+        "exceptions_privileged_group_standing.csv": p2.standing, "exceptions_access_review.csv": p2.review_exceptions,
+        "access_reviews_stale.csv": p2.stale_reviews, "exceptions_allowlisted.csv": allowlisted,
+    }), encoding="utf-8")
     return RunResult(run_dir, info, write_manifest(run_dir, info))
 
 
