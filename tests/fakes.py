@@ -15,8 +15,7 @@ GOOD_RULES = [  # a well-configured PIM policy: activation gated, no permanent a
 
 class FakeApi:
     def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None,
-                 deleted=None, users=None, sign_in_forbidden=False, sps=None, apps=None, owners=None, resources=None,
-                 eligible_at=None):
+                 deleted=None, users=None, sign_in_forbidden=False, sps=None, apps=None, owners=None):
         self.raw = raw
         self.graph = graph or fixture("graph_principals.json")
         self.pim_errors = set(pim_errors)  # {(kind, scope)}
@@ -27,8 +26,6 @@ class FakeApi:
         self.graph_paths: list[str] = []
         self.entra = fixture("entra.json")
         self.deleted = dict(deleted or {})  # id -> recycle-bin object (soft-deleted)
-        self.resources = list(resources or [])            # resource ids returned by the Resource Graph resources query
-        self.eligible_at = dict(eligible_at or {})        # scope -> extra eligibility instances visible only there
         self.users = dict(users or {})      # id -> extra user fields (accountEnabled, signInActivity, ...)
         self.sign_in_forbidden = sign_in_forbidden  # simulate a token without AuditLog.Read.All
         self.sps, self.apps, self.owners = dict(sps or {}), dict(apps or {}), dict(owners or {})  # per SP id
@@ -45,8 +42,7 @@ class FakeApi:
     def arg_query(self, category, query, **kw):
         data = {"arg_roleassignments": fixture("arg_roleassignments.json")["data"],
                 "arg_roledefinitions": fixture("arg_roledefinitions.json")["data"],
-                "arg_resourcecontainers": [{"id": f"/subscriptions/{SUB}"}, {"id": f"/subscriptions/{SUB}/resourceGroups/rg-app"}],
-                "arg_resources": [{"id": r} for r in self.resources]}[category]
+                "arg_resourcecontainers": [{"id": f"/subscriptions/{SUB}"}, {"id": f"/subscriptions/{SUB}/resourceGroups/rg-app"}]}[category]
         self._rec(category, {"data": data})
         return data
 
@@ -90,8 +86,6 @@ class FakeApi:
         if (kind, scope) in self.pim_errors:
             return None, "HTTP 403 AuthorizationFailed"
         v = fixture("pim_active.json" if kind == "active" else "pim_eligible.json")["value"]
-        if kind == "eligible":
-            v = v + self.eligible_at.get(scope, [])
         self._rec(f"pim_{kind}", {"value": v})
         return v, None  # every scope returns everything: exercises de-duplication
 

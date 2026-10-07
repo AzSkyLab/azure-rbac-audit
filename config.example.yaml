@@ -17,10 +17,6 @@ scope:
   # Query PIM schedules for every resource group too (finds eligible-only
   # assignments on RGs). Slower on large estates.
   scan_resource_groups: true
-  # Also query every resource for eligible-only PIM assignments (one call per resource; Resource Graph does not index
-  # PIM schedules). Off by default; resources beyond max_resource_scopes are reported as a coverage gap.
-  scan_resources: false
-  max_resource_scopes: 5000
 
 output_dir: evidence
 

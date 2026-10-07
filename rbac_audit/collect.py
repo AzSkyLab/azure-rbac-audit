@@ -97,16 +97,6 @@ def gather(cfg: Config, api: AzureApi) -> Gathered:
     g.review_scopes = sorted(s for s in pim_scopes if s.lower().startswith("/subscriptions/") and s.count("/") == 2)
 
     jobs = [(k, s) for s in sorted(pim_scopes) for k in ("active", "eligible")]
-    if cfg.scan_resources:
-        # Eligible-only assignments on a resource are invisible from its parents, so ask at each resource. Active ones
-        # need no extra query: Resource Graph already lists every active assignment, and its scope is queried above.
-        resources = sorted({r["id"] for r in api.arg_query("arg_resources", "resources | project id", **kw)} - pim_scopes)
-        if len(resources) > cfg.max_resource_scopes:
-            g.gap(f"{len(resources) - cfg.max_resource_scopes} of {len(resources)} resources not queried for eligible PIM "
-                  f"assignments (scope.max_resource_scopes = {cfg.max_resource_scopes})")
-            resources = resources[:cfg.max_resource_scopes]
-        jobs += [("eligible", r) for r in resources]
-        g.scopes["resources_queried"] = len(resources)
     for (kind, scope), (items, err) in zip(jobs, api.parallel(lambda j: api.pim_instances(*j), jobs)):
         if err:
             g.gap(f"PIM {kind} instances unreadable at {scope or '/'}: {err}")
@@ -344,9 +334,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "control_mapping": CONTROL_MAPPING,
         "pim_failed_scopes": {k: sorted(v) for k, v in g.pim_failed.items()},
     }
-    limitations = KNOWN_LIMITATIONS[1:] if cfg.scan_resources else KNOWN_LIMITATIONS  # [0]: the resource-scope gap
     info = {**_base_info(cfg, identity, started, raw, "complete"), "scopes": g.scopes, "summary": summary,
-            "warnings": warnings, "known_limitations": limitations}
+            "warnings": warnings, "known_limitations": KNOWN_LIMITATIONS}
     (run_dir / "report.html").write_text(report.render(info, {
         "exceptions_privileged_permanent.csv": priv_perm, "exceptions_entra_privileged_permanent.csv": entra_perm,
         "exceptions_direct_user.csv": direct, "inactive_privileged_accounts.csv": inactive.rows,
