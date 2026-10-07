@@ -67,9 +67,16 @@ managed while expanding those. Membership is walked via `/groups/{id}/members` (
 recorded) merged with PIM for Groups `assignmentScheduleInstances` / `eligibilityScheduleInstances`; nested chains take the
 weakest link (a permanent member of a group that is only *eligible* in the privileged group is `eligible_member`).
 
-Access reviews (`identityGovernance/accessReviews`) cover a group if the definition scope or an instance scope names the group
-(membership or PIM for Groups review) or an Azure role review's scope path is a prefix of a scope where the group holds a role
-(a `principalType eq 'User'` filter excludes groups). Frequency uses `review_frequency_days` (monthly = 30 days, so quarterly = 90).
+Access reviews cover a group if:
+- a Graph review (`identityGovernance/accessReviews`) names the group in its definition or instance scope (membership or PIM
+  for Groups review);
+- a Graph Entra role review (`/roleManagement/directory/roleDefinitions/{id}` or a `roleDefinitionId eq` filter) targets a
+  privileged directory role the group holds or is eligible for, unless it is limited to users or service principals; or
+- an Azure resource role review, read from ARM (`Microsoft.Authorization/accessReviewScheduleDefinitions`, per subscription:
+  the API rejects management group and resource group scope), covers a scope where the group holds that role (`resourceId`
+  and below, `roleDefinitionId`, a `principalType` that includes groups).
+
+A review with no reviewers (or ARM `reviewersType: Self`), in any stage, is a self-review. Frequency uses `review_frequency_days` (monthly = 30 days, so quarterly = 90).
 
 **Permissions (all read-only).** Application permissions on the collector's app registration (admin consent):
 `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` (covers both group PIM schedule

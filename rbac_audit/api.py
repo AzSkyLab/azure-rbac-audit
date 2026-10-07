@@ -155,6 +155,13 @@ class AzureApi:
         except ApiError as e:
             return None, str(e)
 
+    def arm_list(self, category: str, path: str) -> tuple[list[dict] | None, str | None]:
+        """GET an ARM collection (all pages) at `path` (which carries its api-version). Returns (items, None) or (None, error)."""
+        try:
+            return self._paged(category, f"{ARM}{path}"), None
+        except ApiError as e:
+            return None, str(e)
+
     def pim_instances(self, kind: str, scope: str) -> tuple[list[dict] | None, str | None]:
         """Schedule instances at-and-above `scope`. Returns (items, None) or (None, error)."""
         url = f"{ARM}{scope.rstrip('/')}/providers/Microsoft.Authorization/{PIM_KINDS[kind]}?api-version={PIM_API}"

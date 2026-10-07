@@ -161,3 +161,114 @@ def test_stale_review_detected_with_graph_single_group_shape(cfg):
     _, d = run(cfg, mutate=real_shape)
     assert ("dddddddd-0000-0000-0000-000000000007", gone) in {
         (r["definition_id"], r["target_group_id"]) for r in read(d, "access_reviews_stale.csv")}
+
+
+# ---- review shapes from Microsoft's documentation: self-review, Entra role reviews, ARM Azure role reviews -------
+SUBSCOPE = "/subscriptions/11111111-1111-1111-1111-111111111111"
+G1 = "0000000b-0000-0000-0000-000000000001"
+CONTRIBUTOR = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+ARM_DEF = f"{SUBSCOPE}/providers/Microsoft.Authorization/accessReviewScheduleDefinitions/arm-def-1"
+
+
+def arm_definition(principal_type="user,group", role=CONTRIBUTOR, below=None, reviewers_type="Assigned"):
+    scope = {"resourceId": SUBSCOPE, "principalType": principal_type, "assignmentState": "active",
+             "roleDefinitionId": f"{SUBSCOPE}/providers/Microsoft.Authorization/roleDefinitions/{role}" if role else None}
+    if below is not None:
+        scope["includeAccessBelowResource"] = below
+    return {"id": ARM_DEF, "name": "arm-def-1", "type": "Microsoft.Authorization/accessReviewScheduleDefinitions",
+            "properties": {"displayName": "Azure role review", "status": "InProgress", "reviewersType": reviewers_type,
+                           "reviewers": [{"principalId": U1 + " ", "principalType": "user"}], "scope": scope,
+                           "settings": {"autoApplyDecisionsEnabled": False, "defaultDecisionEnabled": False,
+                                        "instanceDurationInDays": 7,
+                                        "recurrence": {"pattern": {"type": "absoluteMonthly", "interval": 3},
+                                                       "range": {"type": "noEnd", "startDate": "2025-10-01T00:00:00Z"}}}}}
+
+
+@pytest.mark.parametrize("defn,expected", [
+    ({"reviewers": []}, True),                                                           # documented self-review
+    ({}, True),                                                                          # reviewers omitted
+    ({"stageSettings": [{"reviewers": [{"query": "/users/0000000f-0000-0000-0000-000000000001"}]}, {"reviewers": []}]}, True),
+    ({"reviewers": [], "stageSettings": [{"reviewers": [{"query": "./manager"}]}]}, False),  # stages replace reviewers
+])
+def test_self_review_shapes(defn, expected):
+    from rbac_audit.reviews import self_review
+    assert bool(self_review(defn, set(), set())) is expected
+
+
+def test_entra_role_review_covers_groups_holding_the_role():
+    from rbac_audit.reviews import covering_reviews
+    by_def = lambda q, extra=None: [{"id": "d", "scope": {"query": q, **(extra or {})}}]  # noqa: E731
+    all_holders = f"/roleManagement/directory/roleDefinitions/{GA}"
+    covs = covering_reviews(G2, [], by_def(all_holders), {}, {GA})
+    assert covs and covs[0].kind == "entra_role" and covs[0].via == "entra_role"
+    assert not covering_reviews(G2, [], by_def(all_holders), {}, {"0000000f-0000-0000-0000-000000000009"})  # other role
+    users_only = ("/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal&$filter=(isof(principal,"
+                  f"'microsoft.graph.user') and roleDefinitionId eq '{GA}')")
+    assert not covering_reviews(G2, [], by_def(users_only), {}, {GA})
+    guests = {"@odata.type": "#microsoft.graph.principalResourceMembershipsScope",
+              "principalScopes": [{"query": "/users?$filter=(userType eq 'Guest')"}],
+              "resourceScopes": [{"query": all_holders}]}
+    assert not covering_reviews(G2, [], [{"id": "d", "scope": guests}], {}, {GA})
+
+
+@pytest.mark.parametrize("kw,scopes,covered", [
+    ({}, [(f"{SUBSCOPE}/resourceGroups/rg-app", CONTRIBUTOR)], True),           # below the reviewed resource
+    ({}, [(f"{SUBSCOPE}/resourceGroups/rg-app", "8e3af657-a8ff-443c-a75c-2fe8c4bcb635")], False),  # other role
+    ({"role": None}, [(f"{SUBSCOPE}/resourceGroups/rg-app", "anything")], True),  # all roles
+    ({"principal_type": "user"}, [(SUBSCOPE, CONTRIBUTOR)], False),             # users only: groups not reviewed
+    ({"below": False}, [(f"{SUBSCOPE}/resourceGroups/rg-app", CONTRIBUTOR)], False),
+    ({"below": False}, [(SUBSCOPE, CONTRIBUTOR)], True),
+    ({}, [("/subscriptions/22222222-2222-2222-2222-222222222222", CONTRIBUTOR)], False),
+])
+def test_arm_azure_role_review_coverage(kw, scopes, covered):
+    from rbac_audit.reviews import covering_reviews, from_arm_definition
+    d = from_arm_definition(arm_definition(**kw))
+    assert bool(covering_reviews(G1, scopes, [d], {})) is covered
+
+
+def test_arm_definition_mapping():
+    from rbac_audit.reviews import from_arm_definition, interval_days, self_review
+    d = from_arm_definition(arm_definition())
+    assert d["id"] == ARM_DEF and interval_days(d) == 90
+    assert d["reviewers"] == [{"query": f"/users/{U1}"}]
+    assert d["scope"]["query"].startswith(f"{SUBSCOPE}/providers/Microsoft.Authorization/roleAssignmentScheduleInstances")
+    assert self_review(from_arm_definition(arm_definition(reviewers_type="Self")), set(), set())
+
+
+def test_arm_review_end_to_end_with_unapplied_deny(cfg):
+    def arm(e):
+        e["arm_review_defs"] = {SUBSCOPE: [arm_definition()]}
+        e["arm_review_instances"] = {ARM_DEF: [{"name": "arm-inst-1", "properties": {
+            "status": "Completed", "startDateTime": "2025-12-01T00:00:00Z", "endDateTime": "2025-12-08T00:00:00Z"}}]}
+        e["arm_review_decisions"] = {f"{ARM_DEF}/arm-inst-1": [{"name": "dec-1", "properties": {
+            "decision": "Deny", "principal": {"id": G1, "displayName": "grp-platform-admins", "type": "group"},
+            "reviewedBy": {"principalId": U1, "principalName": "User One", "principalType": "user"},
+            "applyResult": "New", "appliedDateTime": None}}]}
+    info, d = run(cfg, mutate=arm)
+    rows = [r for r in read(d, "access_reviews.csv") if r["definition_id"] == ARM_DEF]
+    assert [(r["group_id"], r["review_kind"], r["covers_via"], r["decisions_denied"], r["denied_unapplied"])
+            for r in rows] == [(G1, "azure_resource_role", "azure_role_scope", "1", "1")]
+    ex = {(r["group_id"], r["reason"]) for r in read(d, "exceptions_access_review.csv") if ARM_DEF in r["detail"]}
+    # the reviewer (User One) is a member of G1, so the ARM review is also a self-review
+    assert ex == {(G1, "decisions_not_applied"), (G1, "denied_still_member"), (G1, "self_review")}
+    dec = next(r for r in read(d, "access_review_decisions.csv") if r["definition_id"] == ARM_DEF)
+    assert dec["reviewer"] == "User One" and dec["decision"] == "Deny"
+
+
+def test_entra_role_review_end_to_end(cfg):
+    def entra_review(e):
+        e["review_defs"].append({"id": "dddddddd-0000-0000-0000-000000000008", "displayName": "GA holders", "status": "InProgress",
+                                 "scope": {"query": f"/roleManagement/directory/roleDefinitions/{GA}", "queryType": "MicrosoftGraph"},
+                                 "reviewers": [{"query": f"/users/{U1}"}],
+                                 "settings": {"recurrence": {"pattern": {"type": "absoluteMonthly", "interval": 3}}}})
+    _, d = run(cfg, mutate=entra_review)
+    covered = {r["group_id"] for r in read(d, "access_reviews.csv") if r["definition_id"].endswith("8")}
+    assert covered == {G2, G3}             # active and eligible Global Administrator groups; not G1 / G4
+
+
+def test_unreadable_arm_reviews_are_a_gap(cfg):
+    info, _ = run(cfg, graph_errors={"arm_access_review_definitions": "HTTP 403 AuthorizationFailed"})
+    s = info["summary"]
+    assert s["coverage_complete"] is False
+    assert any("Azure role access reviews unreadable" in m for m in s["coverage_gaps_by_area"]["access_reviews"])
+    assert not any("Reader" in p for p in s["missing_graph_permissions"])

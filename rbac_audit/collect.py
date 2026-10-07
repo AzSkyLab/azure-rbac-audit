@@ -38,6 +38,7 @@ class Gathered:
     warnings: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)  # anything that makes the run's conclusions incomplete
     gap_areas: dict[str, list[str]] = field(default_factory=dict)
+    review_scopes: list[str] = field(default_factory=list)  # subscriptions to list Azure role access reviews at
 
     def gap(self, msg: str, area: str = "azure_rbac") -> None:
         self.warnings.append(msg)
@@ -90,6 +91,9 @@ def gather(cfg: Config, api: AzureApi) -> Gathered:
     pim_scopes.discard("/")  # root is not directly queryable; its assignments appear in every lower query
     g.scopes = {"subscriptions": subs, "management_groups": cfg.management_groups,
                 "pim_scopes_queried": len(pim_scopes)}
+    # The ARM access review API lists at subscription scope only (400 "ScopeType ... is not validate" at management
+    # group and resource group scope), so Azure role reviews are read per subscription.
+    g.review_scopes = sorted(s for s in pim_scopes if s.lower().startswith("/subscriptions/") and s.count("/") == 2)
 
     jobs = [(k, s) for s in sorted(pim_scopes) for k in ("active", "eligible")]
     for (kind, scope), (items, err) in zip(jobs, api.parallel(lambda j: api.pim_instances(*j), jobs)):
@@ -173,7 +177,11 @@ KNOWN_LIMITATIONS = [
     "Privileged groups are computed from groups that hold a non-standard Azure role or a privileged Entra "
     "directory role; groups managed by PIM for Groups are added only when found while expanding those (Graph "
     "offers no v1.0 listing of onboarded groups). Access-review coverage of filtered all-groups reviews is "
-    "matched through each instance's scope query; Azure role reviews match on path prefix only.",
+    "matched through each instance's scope query.",
+    "Azure resource role access reviews are read from ARM (Microsoft.Authorization/accessReviewScheduleDefinitions), "
+    "which lists them per subscription only; a review defined at management group scope is not read, so a group "
+    "whose privileged Azure role is reviewed only that way is reported as no_review. Coverage matches the review's "
+    "resourceId (and below, unless includeAccessBelowResource is false), roleDefinitionId and principalType.",
 ]
 
 
@@ -213,7 +221,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     p2 = Phase2()
     if cfg.entra_enabled:
         try:
-            p2 = run_phase2(cfg, api, rows, g.principals, started)
+            p2 = run_phase2(cfg, api, rows, g.principals, started, g.review_scopes)
         except Exception as e:  # noqa: BLE001 - phase 2 must not take phase 1 evidence down with it
             p2.gaps["phase2"] = [f"phase 2 aborted: {type(e).__name__}: {e}"]
     else:

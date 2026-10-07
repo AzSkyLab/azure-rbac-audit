@@ -47,6 +47,20 @@ class FakeApi:
             raise RuntimeError(self.descendants_error)
         return self.descendants
 
+    def arm_list(self, category, path):
+        """ARM access reviews from entra.json (arm_review_defs by scope, instances/decisions by definition id)."""
+        self._rec(category, {"path": path})
+        if category in self.graph_errors:
+            return None, self.graph_errors[category]
+        e, base = self.entra, path.split("?")[0]
+        if m := re.fullmatch(r"(.+)/instances/([^/]+)/decisions", base):
+            return e.get("arm_review_decisions", {}).get(f"{m.group(1)}/{m.group(2)}", []), None
+        if m := re.fullmatch(r"(.+)/instances", base):
+            return e.get("arm_review_instances", {}).get(m.group(1), []), None
+        if base.endswith("/providers/Microsoft.Authorization/accessReviewScheduleDefinitions"):
+            return e.get("arm_review_defs", {}).get(base.split("/providers/Microsoft.Authorization/")[0].lower(), []), None
+        raise AssertionError(f"unrouted ARM path {path}")
+
     def pim_instances(self, kind, scope):
         self.pim_queried.append((kind, scope))
         if (kind, scope) in self.pim_errors:

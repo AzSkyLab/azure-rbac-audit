@@ -11,9 +11,11 @@ from . import entra, reviews
 from .config import Config
 from .groups import MEMBER_COLUMNS, standing_exceptions, walk_group
 from .principals import GROUP, classify_principal, graph_path
+from .scope import guid_of
 
 GROUP_COLUMNS = ["group_id", "group_name", "reason_codes", "reasons", "pim_managed", "members_total", "standing_users"]
 AREA_DIRECTORY, AREA_GROUP_PIM, AREA_MEMBERS, AREA_REVIEWS = "entra_directory_roles", "pim_for_groups", "group_membership", "access_reviews"
+PERM_ARM_REVIEWS = "Reader (Microsoft.Authorization/accessReviewScheduleDefinitions/read) at the scope"
 
 
 @dataclass
@@ -65,7 +67,39 @@ def _directory_reasons(api, p2: Phase2, principals: dict, resolve) -> dict[str, 
     return reasons
 
 
-def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: datetime) -> Phase2:
+def _arm_review_definitions(api, p2: Phase2, scopes) -> list[dict]:
+    """Azure resource role reviews (ARM, not Graph) at every queried scope, mapped to the Graph shape."""
+    scopes = sorted(scopes)
+    url = lambda s: f"{s.rstrip('/')}{reviews.ARM_DEFS}?api-version={reviews.ARM_REVIEWS_API}"  # noqa: E731
+    found: dict[str, dict] = {}
+    for s, (items, err) in zip(scopes, api.parallel(lambda s: api.arm_list("arm_access_review_definitions", url(s)), scopes)):
+        if err:  # an ARM permission, not a Graph one: recorded as a gap, not in missing_graph_permissions
+            p2.gaps.setdefault(AREA_REVIEWS, []).append(f"Azure role access reviews unreadable at {s} ({err[:200]}); "
+                                                        f"needs {PERM_ARM_REVIEWS}")
+            continue
+        for i in items:
+            found.setdefault(i["id"].lower(), reviews.from_arm_definition(i))
+    return list(found.values())
+
+
+def _list_instances(api, d: dict):
+    if d.get("_arm"):
+        items, err = api.arm_list("arm_access_review_instances", f"{d['id']}/instances?api-version={reviews.ARM_REVIEWS_API}")
+        return ([reviews.from_arm_item(i) for i in items] if items is not None else None), err
+    return api.graph_list("graph_access_review_instances", f"{reviews.DEFS}/{d['id']}/instances")
+
+
+def _list_decisions(api, key: tuple[str, str]):
+    did, iid = key
+    if did.startswith("/"):  # ARM definition id
+        items, err = api.arm_list("arm_access_review_decisions",
+                                  f"{did}/instances/{iid}/decisions?api-version={reviews.ARM_REVIEWS_API}")
+        return ([reviews.from_arm_item(i) for i in items] if items is not None else None), err
+    return api.graph_list("graph_access_review_decisions", f"{reviews.DEFS}/{did}/instances/{iid}/decisions")
+
+
+def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: datetime, review_scopes=()) -> Phase2:
+    """`review_scopes`: ARM scopes (management groups, subscriptions, resource groups) to list Azure role reviews at."""
     p2 = Phase2()
     principals = dict(known_principals)
 
@@ -122,7 +156,8 @@ def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: 
     lookups = {gid: (200, None) for gid in targets if gid not in unknown}
     lookups.update(api.graph_batch(unknown) if unknown else {})
     p2.stale_reviews = reviews.stale_reviews(targets, lookups)
-    results = api.parallel(lambda d: api.graph_list("graph_access_review_instances", f"{reviews.DEFS}/{d['id']}/instances"), defs)
+    defs = defs + _arm_review_definitions(api, p2, review_scopes)
+    results = api.parallel(lambda d: _list_instances(api, d), defs)
     instances: dict[str, list[dict]] = {}
     unreadable_defs: list[dict] = []
     for d, (items, err) in zip(defs, results):
@@ -130,11 +165,12 @@ def run_phase2(cfg: Config, api, rows: list[dict], known_principals: dict, now: 
             p2.gap(AREA_REVIEWS, f"instances of review '{d.get('displayName')}' unreadable", err, entra.PERM_ACCESS_REVIEWS)
             unreadable_defs.append(d)
         instances[d["id"]] = items or []
-    role_scopes = {gid: [r["scope"] for r in rows if r["principal_id"].lower() == gid and r["privilege_tier"] != "standard"]
-                   for gid in groups}
-    coverages = {gid: reviews.covering_reviews(gid, role_scopes[gid], defs, instances) for gid in groups}
+    role_scopes = {gid: [(r["scope"], guid_of(r["role_definition_id"])) for r in rows
+                         if r["principal_id"].lower() == gid and r["privilege_tier"] != "standard"] for gid in groups}
+    entra_roles = {gid: {r["role_definition_id"].lower() for r in p2.entra_roles if r["principal_id"] == gid} for gid in groups}
+    coverages = {gid: reviews.covering_reviews(gid, role_scopes[gid], defs, instances, entra_roles[gid]) for gid in groups}
     needed = sorted({k for covs in coverages.values() for k in reviews.decisions_needed(covs)})
-    fetched = api.parallel(lambda k: api.graph_list("graph_access_review_decisions", f"{reviews.DEFS}/{k[0]}/instances/{k[1]}/decisions"), needed)
+    fetched = api.parallel(lambda k: _list_decisions(api, k), needed)
     decisions = {}
     for k, (items, err) in zip(needed, fetched):
         decisions[k] = items

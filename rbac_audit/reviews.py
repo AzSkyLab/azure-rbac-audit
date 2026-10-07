@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 DEFS = "/v1.0/identityGovernance/accessReviews/definitions"
+# Azure resource role reviews (PIM > Azure resources) are ARM objects, not Graph ones; listed per scope.
+ARM_REVIEWS_API = "2021-12-01-preview"
+ARM_DEFS = "/providers/Microsoft.Authorization/accessReviewScheduleDefinitions"
 COMPLETED = {"completed", "applied"}
 INACTIVE_STATUSES = {"completed", "stopped", "stopping"}  # definition statuses that are no longer running a review
 FAILED_APPLY = {"new", "appliedwithunknownfailure", "applynotsupported"}  # applyResult values meaning "not applied"
@@ -77,6 +80,8 @@ def review_kind(query: str) -> str:
     q = query.lower()
     if "/privilegedaccess/group/" in q:
         return "pim_for_groups"
+    if "/rolemanagement/directory/" in q:
+        return "entra_role"
     if "/providers/microsoft.authorization/" in q:
         return "azure_resource_role"
     if "/groups" in q:
@@ -103,6 +108,66 @@ def recurrence_text(defn: dict) -> str:
 def _excludes_groups(query: str) -> bool:
     m = re.search(r"principaltype\s+eq\s+'(\w+)'", query)
     return bool(m) and m.group(1) != "group"
+
+
+_ENTRA_ROLE = re.compile(rf"(?:/roledefinitions/|roledefinitionid eq ')({_UUID})")
+
+
+def _scope_queries(defn: dict) -> list[str]:
+    """scope.query, plus resourceScopes of a principalResourceMembershipsScope."""
+    sc = defn.get("scope") or {}
+    return [q for q in [_q(sc)] + [_q(r) for r in sc.get("resourceScopes") or []] if q]
+
+
+def _entra_review_excludes_groups(defn: dict, query: str) -> bool:
+    """A directory-role review limited to users or service principals does not review a group's assignment."""
+    if "isof(principal,'microsoft.graph.user')" in query or "isof(principal,'microsoft.graph.serviceprincipal')" in query:
+        return True
+    principals = [_q(x) for x in (defn.get("scope") or {}).get("principalScopes") or []]
+    return bool(principals) and all("user" in q or "serviceprincipal" in q for q in principals)
+
+
+def _under(scope: str, resource: str, below: bool) -> bool:
+    scope = scope.lower().rstrip("/")
+    return scope == resource or (below and scope.startswith(resource + "/"))
+
+
+def from_arm_definition(item: dict) -> dict:
+    """Map an ARM accessReviewScheduleDefinition to the Graph-shaped dict the evaluation uses. `_arm` carries the
+    ARM scope (resourceId, role, principal type, includeAccessBelowResource) used for coverage matching."""
+    p = item.get("properties") or {}
+    sc = p.get("scope") or {}
+    kind = (p.get("reviewersType") or "").lower()
+    if kind == "self":
+        reviewers = []
+    elif kind == "managers":
+        reviewers = [{"query": "./manager"}]
+    else:
+        reviewers = [{"query": f"/{'servicePrincipals' if (r.get('principalType') or '').lower() == 'serviceprincipal' else 'users'}/"
+                               f"{(r.get('principalId') or '').strip()}"} for r in p.get("reviewers") or []]
+    resource = (sc.get("resourceId") or "").rstrip("/")
+    role = (sc.get("roleDefinitionId") or "").rstrip("/").split("/")[-1].lower()
+    state = "Eligibility" if (sc.get("assignmentState") or "").lower() == "eligible" else "Assignment"
+    filters = [f"{k} eq '{v}'" for k, v in (("principalType", sc.get("principalType")), ("roleDefinitionId", role)) if v]
+    return {
+        "id": item["id"], "displayName": p.get("displayName", ""), "status": p.get("status", ""),
+        "scope": {"query": f"{resource}/providers/Microsoft.Authorization/role{state}ScheduleInstances"
+                           + (f"?$filter=({' and '.join(filters)})" if filters else "")},
+        "reviewers": reviewers, "settings": p.get("settings") or {},
+        "_arm": {"resource": resource.lower(), "role": role, "principal_type": (sc.get("principalType") or "").lower(),
+                 "below": sc.get("includeAccessBelowResource") is not False},
+    }
+
+
+def from_arm_item(item: dict) -> dict:
+    """ARM instance / decision -> Graph-like shape (properties flattened, actor identities renamed)."""
+    p = dict(item.get("properties") or {})
+    for actor in ("reviewedBy", "appliedBy"):
+        a = p.get(actor) or {}
+        if a:
+            p[actor] = {"id": a.get("principalId", ""), "displayName": a.get("principalName", ""),
+                        "userPrincipalName": a.get("userPrincipalName", "")}
+    return {**p, "id": item.get("name") or item.get("id", "")}
 
 
 def review_target_groups(defs: list[dict], now: datetime) -> dict[str, list[dict]]:
@@ -142,12 +207,27 @@ class Coverage:
     via: str
 
 
-def covering_reviews(group_id: str, role_scopes: list[str], defs: list[dict],
-                     instances_by_def: dict[str, list[dict]]) -> list[Coverage]:
+def covering_reviews(group_id: str, role_scopes: list, defs: list[dict], instances_by_def: dict[str, list[dict]],
+                     entra_roles: set[str] = frozenset()) -> list[Coverage]:
+    """`role_scopes`: scopes (or (scope, role definition guid) pairs) where the group holds a non-standard Azure role;
+    `entra_roles`: privileged Entra directory role definition ids the group holds or is eligible for."""
     gid = group_id.lower()
+    scopes = [(s, "") if isinstance(s, str) else (s[0], (s[1] or "").lower()) for s in role_scopes]
     out = []
     for d in defs:
         insts = instances_by_def.get(d["id"], [])
+        arm = d.get("_arm")
+        if arm:
+            if arm["principal_type"] and "group" not in arm["principal_type"]:
+                continue
+            if any(_under(s, arm["resource"], arm["below"]) and (not arm["role"] or g == arm["role"]) for s, g in scopes):
+                out.append(Coverage(gid, d, insts, "azure_resource_role", "azure_role_scope"))
+            continue
+        entra = [q for q in _scope_queries(d) if review_kind(q) == "entra_role"]
+        if entra:
+            if any(set(_ENTRA_ROLE.findall(q)) & entra_roles and not _entra_review_excludes_groups(d, q) for q in entra):
+                out.append(Coverage(gid, d, insts, "entra_role", "entra_role"))
+            continue
         dq = _q(d.get("scope"))
         if d.get("instanceEnumerationScope"):  # one instance per enumerated group: match on instance scope
             mine = [i for i in insts if gid in _q(i.get("scope"))]
@@ -160,7 +240,7 @@ def covering_reviews(group_id: str, role_scopes: list[str], defs: list[dict],
             prefix = dq.split("/providers/microsoft.authorization")[0].rstrip("/")
             if gid in dq:
                 out.append(Coverage(gid, d, insts, "azure_resource_role", "principal_filter"))
-            elif any(s.lower().rstrip("/") == prefix or s.lower().startswith(prefix + "/") for s in role_scopes):
+            elif any(_under(s, prefix, True) for s, _ in scopes):
                 out.append(Coverage(gid, d, insts, "azure_resource_role", "azure_role_scope"))
     return out
 
@@ -179,8 +259,17 @@ def decisions_needed(coverages: list[Coverage]) -> set[tuple[str, str]]:
     return {(c.defn["id"], i["id"]) for c in coverages if (i := latest_completed(c.instances))}
 
 
+def _reviewer_sets(defn: dict) -> list[list[dict]]:
+    """Reviewer scopes per stage (multi-stage stageSettings replace the definition's reviewers)."""
+    stages = defn.get("stageSettings") or []
+    return [s.get("reviewers") or [] for s in stages] if stages else [defn.get("reviewers") or []]
+
+
 def self_review(defn: dict, member_ids: set[str], group_ids: set[str]) -> str:
-    for r in defn.get("reviewers") or []:
+    sets = _reviewer_sets(defn)
+    if any(not rs for rs in sets):
+        return "no reviewers configured: a self-review, reviewees attest their own access"
+    for r in (r for rs in sets for r in rs):
         q = _q(r)
         if q in ("./members", "./", "."):
             return "reviewers are the reviewees themselves"
@@ -194,7 +283,7 @@ def self_review(defn: dict, member_ids: set[str], group_ids: set[str]) -> str:
 
 
 def reviewers_text(defn: dict) -> str:
-    return "; ".join(_q(r) for r in defn.get("reviewers") or []) or "(none)"
+    return " || ".join("; ".join(_q(r) for r in rs) or "(self-review)" for rs in _reviewer_sets(defn))
 
 
 @dataclass
