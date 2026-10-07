@@ -1,4 +1,4 @@
-"""Credential setup. Uses the existing `az login` session; stores nothing."""
+"""Credential setup: `az login` session, app certificate, or managed identity. Stores nothing."""
 from __future__ import annotations
 
 import base64
@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import AzureCliCredential, CertificateCredential, DefaultAzureCredential
+from azure.identity import AzureCliCredential, CertificateCredential, DefaultAzureCredential, ManagedIdentityCredential
 
 from .config import AuthConfig, ConfigError
 
@@ -19,6 +19,8 @@ GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 def build_credential(auth: AuthConfig, tenant_id: str):
     """Credential for the configured auth mode. Returns (credential, warnings). No secret is stored or logged."""
+    if auth.mode == "managed_identity":
+        return ManagedIdentityCredential(client_id=auth.client_id or None), []
     if auth.mode != "certificate":
         return get_credential(), []
     path = Path(os.path.expanduser(auth.certificate_path))

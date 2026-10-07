@@ -73,12 +73,25 @@ entra:
   enabled: true
   max_group_depth: 10     # nested-group expansion depth
 
+# Where `collect --publish` / `publish` send a finished run (omit a block to skip that target). Needs
+# `pip install -e '.[publish]'`. Both use the same identity as collection; no secrets here.
+# publish:
+#   storage:                                 # evidence of record: use a container with an immutability policy
+#     account_url: "https://<account>.blob.core.windows.net"
+#     container: "rbac-audit-evidence"
+#     prefix: "prod/"                        # optional
+#   postgres:                                # queryable copy; schema from sql/schema.sql, identity has SELECT+INSERT
+#     host: "<server>.postgres.database.azure.com"
+#     database: "<database>"
+#     user: "<Entra principal name of the identity>"
+#     schema: "rbac_audit"
+
 # Sign-in. Default `cli` reuses your `az login` session (its Graph token lacks the PIM-for-Groups, directory-role
 # eligibility and access-review permissions, so phase 2 reports coverage gaps). For full coverage use an app
 # registration with a certificate (no secret in this file; keep the PEM, private key included, at mode 600):
 #   Graph APPLICATION permissions (admin consent): Directory.Read.All, RoleManagement.Read.Directory,
 #   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All; Azure RBAC: Reader at the tenant root management group.
 # auth:
-#   mode: certificate                       # cli | certificate
+#   mode: certificate                       # cli | certificate | managed_identity (client_id = user-assigned MI)
 #   client_id: "<application (client) id>"
 #   certificate_path: "~/.config/rbac-audit/rbac-audit-collector.pem"

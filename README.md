@@ -1,8 +1,9 @@
 # azure-rbac-audit
 
 Read-only evidence collector for Azure RBAC audits (NIST 800-53 AC-2/AC-5/AC-6, CIS Azure Foundations identity & access).
-Uses your existing `az login` session (AzureCliCredential, falling back to DefaultAzureCredential). Stores no secrets and
-never calls a create/update/delete API (enforced in `rbac_audit/api.py`).
+Signs in with your `az login` session, an app certificate or a managed identity. Stores no secrets, and collection never
+calls a create/update/delete API against Azure or Microsoft Graph (enforced in `rbac_audit/api.py`). The optional
+`publish` step is the only writer: it uploads a finished run to a blob container and loads it into PostgreSQL.
 
 ```
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
@@ -100,6 +101,25 @@ the manifest config, and an entry that matches nothing is a warning so stale acc
 `auth.client_id`, `auth.certificate_path`; no secrets in config; a warning is printed if the PEM is readable by anyone but
 its owner). The manifest records the identity (type, appId/UPN), the Graph token's `roles` / `scp`, and
 `collector_identity_read_only` (false, with a CLI warning, if any granted role or scope contains "Write").
+`auth.mode: managed_identity` uses the runner's Azure managed identity (`auth.client_id` = a user-assigned identity's client
+id; empty = system-assigned): the recommended mode for a scheduled deployment, with nothing to rotate. In CI, sign in with
+OIDC (`azure/login`) and use `auth.mode: cli`.
+
+### Publishing a run (blob storage + PostgreSQL)
+
+`rbac-audit collect --publish` (or later, `rbac-audit publish --run evidence/<timestamp>`) publishes a run only if its status
+is `complete` and every file still matches the manifest hashes. Install with `pip install -e '.[publish]'`.
+
+- **Blob storage** (`publish.storage`): every file goes to `<container>/<prefix><run>/...`, the manifest and its digest last,
+  never overwriting (use a container with a time-based immutability policy: this is the evidence of record).
+- **PostgreSQL** (`publish.postgres`, e.g. Azure Database for PostgreSQL Flexible Server with Entra authentication; the
+  identity's Entra token is the password): one `runs` row (summary, manifest hash, evidence URL) and every CSV row as `jsonb`
+  in `run_rows`, in one transaction, insert-only (a run already loaded is skipped). An admin applies `sql/schema.sql` once
+  and grants the identity `SELECT, INSERT` only.
+
+Exit codes for schedulers: `0` complete and conclusive, `1` collection failed (sealed `-FAILED` folder), `2` config or tenant
+mismatch, `3` complete but coverage incomplete, `4` publish failed (evidence kept locally). Exceptions found are findings,
+not failures. `--json` prints one JSON line (status, summary counts, manifest hash, publish result) for log pipelines.
 
 ### Creating the collector app registration
 

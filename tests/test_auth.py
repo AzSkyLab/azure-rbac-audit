@@ -168,3 +168,20 @@ def test_cli_warns_when_collector_identity_is_not_read_only(cfg, tmp_path):
 def test_cli_no_read_only_warning_when_read_only(cfg, tmp_path):
     info = info_for(cfg, graph_token={"roles": ["Directory.Read.All"], "scp": []}, read_only=True)
     assert not any("read-only" in e for e in summarize(RunResult(tmp_path, info, "0" * 64))[1])
+
+
+def test_managed_identity_mode(monkeypatch):
+    cfg = parse_config(cfg_raw(mode="managed_identity", client_id=CLIENT.upper()))
+    assert cfg.auth.mode == "managed_identity" and cfg.auth.client_id == CLIENT
+    seen = {}
+    monkeypatch.setattr(auth, "ManagedIdentityCredential", lambda **kw: seen.update(kw) or "mi")
+    assert auth.build_credential(cfg.auth, TENANT) == ("mi", [])
+    assert seen == {"client_id": CLIENT}
+    system = parse_config(cfg_raw(mode="managed_identity"))       # no client_id: system-assigned identity
+    auth.build_credential(system.auth, TENANT)
+    assert seen == {"client_id": None}
+
+
+def test_managed_identity_rejects_bad_client_id():
+    with pytest.raises(ConfigError, match="managed identity"):
+        parse_config(cfg_raw(mode="managed_identity", client_id="not-a-guid"))
