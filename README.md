@@ -52,12 +52,12 @@ at the scope). Principals Graph denies are reported as `unresolved`, never `Orph
   enumeration or role-definition lookup failed, or any principal's type could not be confirmed (those are `REVIEW`, never
   `PASS`, in the direct-user control). `summary.pim_failed_scopes` lists failed `active` / `eligible` scopes.
 - A run that errors part-way is sealed as `<timestamp>-FAILED/` with `status: "failed"` in its manifest; it is not evidence.
-- **Known gap: eligible-only assignments at resource scope.** The PIM schedule-instance APIs return instances at-and-above
-  the queried scope only (checked against a subscription and the tenant root management group: unfiltered and
-  `$filter=atScope()` return identical sets, nothing from child scopes). The tool therefore queries every management group
-  (including descendants of configured ones), subscription and, with `scan_resource_groups`, resource group, but not each
-  resource. An eligible assignment on a single resource whose principal has no active assignment there is not reported.
-  This is recorded in the manifest as `known_limitations`.
+- **PIM scopes.** The tool queries the PIM schedule instances at every management group (including descendants of
+  configured ones), every subscription and, with `scan_resource_groups`, every resource group. Verified live (2026-10): an
+  unfiltered query at a subscription or resource group returns instances at, above **and below** it (an eligible-only
+  assignment on a single resource came back from both), while a management group query returns its own level and above
+  only. Resource-level eligible assignments are therefore found through their subscription; no per-resource query is
+  needed.
 - Custom roles are tiered on `actions` (-> `custom_privileged`) and `dataActions` (-> `sensitive_data_plane`, patterns in
   `custom_role_sensitive_data_actions`). A `notActions` / `notDataActions` entry removes a pattern only if it
   covers the whole pattern within the same permission block (`*` minus `Microsoft.Authorization/*/write` stays privileged).

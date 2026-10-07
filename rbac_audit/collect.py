@@ -174,10 +174,6 @@ CONTROL_MAPPING = {
 }
 
 KNOWN_LIMITATIONS = [
-    "Eligible-only PIM assignments at resource scope (below resource group) are not enumerated: the "
-    "roleAssignmentScheduleInstances/roleEligibilityScheduleInstances APIs return instances at-and-above the "
-    "queried scope only, so resources are not individually queried. Eligible assignments on a resource whose "
-    "principal has no active assignment there are therefore not reported.",
     "Privileged groups are computed from groups that hold a non-standard Azure role or a privileged Entra "
     "directory role; groups managed by PIM for Groups are added only when found while expanding those (Graph "
     "offers no v1.0 listing of onboarded groups). Access-review coverage of filtered all-groups reviews is "

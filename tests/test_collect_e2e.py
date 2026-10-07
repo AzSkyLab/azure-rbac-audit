@@ -63,7 +63,7 @@ def test_manifest_status_digest_and_clean_run_is_complete(cfg, tmp_path):
     m = json.loads((run_dir / "manifest.json").read_text())
     assert m["status"] == "complete" and m["summary"]["coverage_complete"] is True
     assert m["summary"]["pim_failed_scopes"] == {"active": [], "eligible": []}
-    assert m["known_limitations"] and "resource scope" in m["known_limitations"][0]
+    assert m["known_limitations"] and not any("resource scope" in k for k in m["known_limitations"])
     digest, name = (run_dir / "manifest.sha256").read_text().split()
     assert name == "manifest.json" and digest == hashlib.sha256((run_dir / "manifest.json").read_bytes()).hexdigest()
     assert "manifest.sha256" not in m["files"] and verify_manifest(run_dir) == []
@@ -169,3 +169,28 @@ def test_csv_formula_injection_neutralised(tmp_path):
     path = tmp_path / "x.csv"
     write_csv(path, ["name", "flag"], [{"name": "=cmd|' /C calc'!A0", "flag": False}])
     assert path.read_text().splitlines()[1].startswith("'=cmd") and rows(path)[0]["flag"] == "False"
+
+
+class SubscriptionReturnsChildren(FakeApi):
+    """Live behaviour: a subscription-scope PIM query also returns eligibilities on resources below it."""
+    VM = f"/subscriptions/{SUB}/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm1"
+
+    def pim_instances(self, kind, scope):
+        items, err = super().pim_instances(kind, scope)
+        if kind == "eligible" and scope == f"/subscriptions/{SUB}" and items is not None:
+            import copy
+            inst = copy.deepcopy(items[0])
+            inst["id"] = f"{self.VM}/providers/Microsoft.Authorization/roleEligibilityScheduleInstances/vm-elig"
+            inst["properties"].update(scope=self.VM, roleEligibilityScheduleId=f"{self.VM}/rES/vm-elig")
+            items = items + [inst]
+        return items, err
+
+
+def test_resource_level_eligibility_from_subscription_query_is_inventoried(cfg, tmp_path):
+    started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    run_dir = new_run_dir(cfg, started)
+    raw = RawStore(run_dir / "raw")
+    result = run_collection(cfg, SubscriptionReturnsChildren(raw), raw, run_dir, {"upn": "x"}, started)
+    vm = [r for r in rows(run_dir / "assignments.csv") if r["scope"] == SubscriptionReturnsChildren.VM]
+    assert [(r["pim_label"], r["scope_level"]) for r in vm] == [("eligible", "resource")]
+    assert not any("resource scope" in k for k in result.info["known_limitations"])
