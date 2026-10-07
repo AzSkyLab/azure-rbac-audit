@@ -82,6 +82,32 @@ def _pim_policy(raw) -> PimPolicyConfig:
     return PimPolicyConfig(**kw)
 
 
+@dataclass(frozen=True)
+class ServicePrincipalConfig:
+    """Hygiene checks for privileged service principals (service_principals: in the config)."""
+    enabled: bool = True
+    max_secret_days: int = 180
+    expiry_warning_days: int = 30
+    flag_owners: bool = True
+
+    def public_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def _service_principals(raw) -> ServicePrincipalConfig:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("service_principals must be a mapping")
+    unknown = set(raw) - set(ServicePrincipalConfig.__dataclass_fields__)
+    if unknown:
+        raise ConfigError(f"service_principals: unknown setting(s) {', '.join(sorted(unknown))}")
+    for k, v in raw.items():
+        want_bool = k in ("enabled", "flag_owners")
+        if want_bool != isinstance(v, bool) or (not want_bool and (not isinstance(v, int) or v <= 0)):
+            raise ConfigError(f"service_principals.{k} must be {'true or false' if want_bool else 'a positive integer'}")
+    return ServicePrincipalConfig(**raw)
+
+
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
@@ -142,6 +168,7 @@ class Config:
     publish: PublishConfig = PublishConfig()
     inactive_account_days: int = 90  # 0 = do not check privileged accounts for sign-in inactivity / disabled state
     pim_policy: PimPolicyConfig = PimPolicyConfig()
+    service_principals: ServicePrincipalConfig = ServicePrincipalConfig()
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -163,6 +190,7 @@ class Config:
             "publish": self.publish.public_dict(),
             "inactive_account_days": self.inactive_account_days,
             "pim_policy": self.pim_policy.public_dict(),
+            "service_principals": self.service_principals.public_dict(),
         }
 
 
@@ -253,6 +281,7 @@ def parse_config(raw: dict) -> Config:
         publish=_publish(raw.get("publish")),
         inactive_account_days=inactive,
         pim_policy=_pim_policy(raw.get("pim_policy")),
+        service_principals=_service_principals(raw.get("service_principals")),
     )
 
 

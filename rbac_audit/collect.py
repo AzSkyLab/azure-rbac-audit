@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from . import activity, changes, pim_policy, report
+from . import activity, changes, pim_policy, report, sp_hygiene
 from .api import AzureApi, RawStore
 from .config import Config
 from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
@@ -167,6 +167,7 @@ CONTROL_MAPPING = {
     "AC-2(j)": ["access_reviews.csv", "access_review_decisions.csv", "exceptions_access_review.csv", "access_reviews_stale.csv"],
     "AC-6": ["exceptions_privileged_permanent.csv", "exceptions_entra_privileged_permanent.csv", "exceptions_allowlisted.csv"],
     "AC-6(1)": ["pim_policies.csv", "exceptions_pim_policy.csv"],
+    "IA-5": ["privileged_service_principals.csv", "exceptions_service_principal.csv"],
     "AC-6(7)": ["privileged_groups.csv", "access_reviews.csv", "exceptions_access_review.csv"],
     "AC-2(7)": ["privileged_groups.csv", "group_members.csv", "exceptions_privileged_group_standing.csv"],
     "AC-2(3)": ["inactive_privileged_accounts.csv"],
@@ -247,6 +248,16 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         p2.missing_permissions |= policy.missing_permissions
         for m in policy.gaps:
             p2.gaps.setdefault("pim_policies", []).append(m)
+    sps = sp_hygiene.SpResult()
+    if cfg.service_principals.enabled:
+        try:
+            sps = sp_hygiene.check_service_principals(api, rows, p2.entra_roles, p2.members, started, cfg.tenant_id,
+                                                      cfg.service_principals, cfg.inactive_account_days)
+        except Exception as e:  # noqa: BLE001
+            sps.gaps.append(f"service principal check aborted: {type(e).__name__}: {e}")
+        p2.missing_permissions |= sps.missing_permissions
+        for m in sps.gaps:
+            p2.gaps.setdefault("service_principals", []).append(m)
     for area, msgs in p2.gaps.items():
         for m in msgs:
             g.gap(m, area)
@@ -257,7 +268,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     direct, ok1 = apply_allowlist(direct_user_exceptions(rows), allow, "exceptions_direct_user.csv", used)
     priv_perm, ok2 = apply_allowlist(privileged_permanent_exceptions(rows), allow, "exceptions_privileged_permanent.csv", used)
     entra_perm, ok3 = apply_allowlist(entra_perm, allow, "exceptions_entra_privileged_permanent.csv", used)
-    allowlisted = ok1 + ok2 + ok3
+    sp_exc, ok4 = apply_allowlist(sps.exceptions, allow, "exceptions_service_principal.csv", used)
+    allowlisted = ok1 + ok2 + ok3 + ok4
     warnings += [f"exception_allowlist entry for {e.principal_id} ({e.role or 'any role'}) matched nothing; remove it if stale"
                  for i, e in enumerate(allow) if i not in used]
     write_csv(run_dir / "assignments.csv", COLUMNS, rows)
@@ -274,6 +286,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
     write_csv(run_dir / "access_reviews_stale.csv", STALE_COLUMNS, p2.stale_reviews)
     write_csv(run_dir / "inactive_privileged_accounts.csv", activity.COLUMNS, inactive.rows)
+    write_csv(run_dir / "privileged_service_principals.csv", sp_hygiene.INVENTORY_COLUMNS, sps.inventory)
+    write_csv(run_dir / "exceptions_service_principal.csv", sp_hygiene.EXCEPTION_COLUMNS, sp_exc)
     write_csv(run_dir / "pim_policies.csv", pim_policy.POLICY_COLUMNS, policy.policies)
     write_csv(run_dir / "exceptions_pim_policy.csv", pim_policy.EXCEPTION_COLUMNS, policy.exceptions)
     since, delta = _changes(cfg, api, run_dir, warnings)
@@ -305,6 +319,9 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "access_reviews_stale": len(p2.stale_reviews),
         "inactive_privileged_accounts": len({r["principal_id"] for r in inactive.rows}),
         "inactive_privileged_by_reason": _count(inactive.rows, "reason"),
+        "privileged_service_principals": len(sps.inventory),
+        "exceptions_service_principal": len(sp_exc),
+        "exceptions_service_principal_by_reason": _count(sp_exc, "reason"),
         "pim_policies_checked": len(policy.policies),
         "exceptions_pim_policy": len(policy.exceptions),
         "exceptions_pim_policy_by_reason": _count(policy.exceptions, "reason"),
@@ -324,7 +341,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_direct_user.csv": direct, "inactive_privileged_accounts.csv": inactive.rows,
         "exceptions_privileged_group_standing.csv": p2.standing, "exceptions_access_review.csv": p2.review_exceptions,
         "access_reviews_stale.csv": p2.stale_reviews, "exceptions_allowlisted.csv": allowlisted,
-        "changes.csv": delta, "exceptions_pim_policy.csv": policy.exceptions,
+        "changes.csv": delta, "exceptions_pim_policy.csv": policy.exceptions, "exceptions_service_principal.csv": sp_exc,
     }), encoding="utf-8")
     return RunResult(run_dir, info, write_manifest(run_dir, info))
 

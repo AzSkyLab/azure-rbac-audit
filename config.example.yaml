@@ -83,6 +83,13 @@ pim_policy:
   allow_permanent_eligible: false
   allow_permanent_active: false
 
+# Hygiene checks for service principals / managed identities with privileged access.
+service_principals:
+  enabled: true
+  max_secret_days: 180            # client secrets valid longer than this are findings (certificates are not limited)
+  expiry_warning_days: 30
+  flag_owners: true               # owners can add credentials and act as the service principal
+
 # Phase 2: privileged groups, PIM for Groups membership and access reviews (Microsoft Graph).
 entra:
   enabled: true

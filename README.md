@@ -31,6 +31,7 @@ Each run writes `evidence/<UTC timestamp>/`:
 | `exceptions_access_review.csv` | one row per group per reason: `no_review`, `frequency_too_low`, `overdue`, `not_completed`, `decisions_not_applied`, `denied_still_member`, `self_review`, `default_approve`, or `coverage_gap` when review data could not be read |
 | `inactive_privileged_accounts.csv` | privileged users that are disabled, pending guests, never signed in or inactive (AC-2(3)) |
 | `pim_policies.csv`, `exceptions_pim_policy.csv` | PIM activation settings for privileged access, and where they fall short of `pim_policy` (AC-6(1)) |
+| `privileged_service_principals.csv`, `exceptions_service_principal.csv` | service principals / managed identities with privileged access: credentials, owners, owning tenant, last sign-in, and their hygiene findings (IA-5) |
 | `changes.csv` | privileged access added, removed or changed since the previous fully covered run |
 | `report.html` | one self-contained page summarising the run for reviewers |
 | `manifest.json` | status (`complete`/`failed`), run time, signed-in identity, tenant, scopes, tool version, call log, warnings, coverage, SHA-256 of every file |
@@ -113,6 +114,19 @@ whether permanent eligible / active assignments are allowed, and reports what fa
 (`activation_mfa_not_required`, `activation_justification_not_required`, `activation_approval_not_required`,
 `activation_too_long`, `permanent_eligibility_allowed`, `permanent_active_assignment_allowed`). Azure's default role
 settings do not require MFA on activation.
+
+### Service principal hygiene (`privileged_service_principals.csv`, `exceptions_service_principal.csv`, IA-5)
+
+Every service principal or managed identity holding a non-standard Azure role directly, a privileged Entra role, or
+membership of a privileged group is inventoried with its credentials (on the service principal and, for this tenant's
+apps, the application), owners, owning tenant and last sign-in (beta `reports/servicePrincipalSignInActivities`), and
+checked for: `external_app` (owned by another tenant, or by none, e.g. legacy service principals), `secret_lifetime_too_long`
+(client secret valid longer than `service_principals.max_secret_days`, default 180; certificates are not limited),
+`credential_expired`, `credential_expiring` (within `expiry_warning_days`, default 30), `has_owners` (an owner can add a
+credential and act as the service principal; `flag_owners: false` turns this off), `never_signed_in` and `inactive`
+(`inactive_account_days`). Managed identities only get the sign-in checks. Microsoft first-party service principals
+(e.g. MS-PIM) are marked `microsoft_first_party` and skip the external-app and inactivity checks. Findings honour
+`exception_allowlist`.
 
 ### Changes since the previous run (`changes.csv`)
 

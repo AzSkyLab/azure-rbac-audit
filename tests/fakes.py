@@ -1,7 +1,7 @@
 """Fake AzureApi serving sanitized fixtures; no network."""
 import re
 
-from conftest import SUB, fixture
+from conftest import SUB, TENANT, fixture
 
 
 GOOD_RULES = [  # a well-configured PIM policy: activation gated, no permanent assignments
@@ -15,7 +15,7 @@ GOOD_RULES = [  # a well-configured PIM policy: activation gated, no permanent a
 
 class FakeApi:
     def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None,
-                 deleted=None, users=None, sign_in_forbidden=False):
+                 deleted=None, users=None, sign_in_forbidden=False, sps=None, apps=None, owners=None):
         self.raw = raw
         self.graph = graph or fixture("graph_principals.json")
         self.pim_errors = set(pim_errors)  # {(kind, scope)}
@@ -28,6 +28,7 @@ class FakeApi:
         self.deleted = dict(deleted or {})  # id -> recycle-bin object (soft-deleted)
         self.users = dict(users or {})      # id -> extra user fields (accountEnabled, signInActivity, ...)
         self.sign_in_forbidden = sign_in_forbidden  # simulate a token without AuditLog.Read.All
+        self.sps, self.apps, self.owners = dict(sps or {}), dict(apps or {}), dict(owners or {})  # per SP id
 
     def _rec(self, category, payload, url="fake://"):
         self.raw.save_json(category, payload, method="GET", url=url, status=200)
@@ -103,6 +104,15 @@ class FakeApi:
                 if "signInActivity" not in path:
                     user.pop("signInActivity", None)
                 out[pid] = (status, user if status == 200 else body)
+            elif path.startswith(("/servicePrincipals/", "/applications(")) and "/owners" in path:
+                kind = "app" if path.startswith("/applications(") else "sp"
+                out[pid] = (200, {"value": self.owners.get((pid, kind), [])})
+            elif path.startswith("/servicePrincipals/") and "appOwnerOrganizationId" in path:
+                status, body = self.graph[pid]
+                out[pid] = (status, {"appOwnerOrganizationId": TENANT, "passwordCredentials": [], "keyCredentials": [],
+                                     **(body or {}), **self.sps.get(pid, {})})
+            elif path.startswith("/applications("):
+                out[pid] = (200, {"passwordCredentials": [], "keyCredentials": [], **self.apps.get(pid, {})})
             elif path.startswith("/groups/"):  # existence check of an access review's target group
                 out[pid] = tuple(self.graph.get(pid, not_found))
             else:
@@ -135,6 +145,9 @@ class FakeApi:
         if m := re.fullmatch(r"/v1.0/identityGovernance/privilegedAccess/group/(assignment|eligibility)ScheduleInstances", base):
             gid = re.search(r"groupId eq '([^']+)'", path).group(1)
             return e["groups"].get(gid, {}).get("assigned" if m.group(1) == "assignment" else "eligible", []), None
+        if base == "/beta/reports/servicePrincipalSignInActivities":
+            return e.get("sp_sign_ins", [{"appId": b["appId"], "lastSignInActivity": {"lastSignInDateTime": "2026-01-01T00:00:00Z"}}
+                                         for s, b in self.graph.values() if s == 200 and b and b.get("appId")]), None
         if base == "/v1.0/policies/roleManagementPolicyAssignments":
             if m := re.search(r"scopeId eq '([^']+)' and scopeType eq 'Group'", path):
                 return e.get("group_pim_policies", {}).get(m.group(1), [
