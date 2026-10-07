@@ -107,6 +107,7 @@ class Config:
     auth: AuthConfig = AuthConfig()
     exception_allowlist: tuple[AllowEntry, ...] = ()
     publish: PublishConfig = PublishConfig()
+    inactive_account_days: int = 90  # 0 = do not check privileged accounts for sign-in inactivity / disabled state
 
     def public_dict(self) -> dict:
         """Config echo for the manifest. Holds no secrets by construction."""
@@ -126,6 +127,7 @@ class Config:
             "auth": self.auth.public_dict(),
             "exception_allowlist": [e.public_dict() for e in self.exception_allowlist],
             "publish": self.publish.public_dict(),
+            "inactive_account_days": self.inactive_account_days,
         }
 
 
@@ -178,6 +180,9 @@ def parse_config(raw: dict) -> Config:
     if not (admin and custom):
         raise ConfigError("privileged_roles.privileged_admin and custom_role_privileged_actions must be set "
                           "(see config.example.yaml); empty lists would classify everything as standard")
+    inactive = raw.get("inactive_account_days", 90)
+    if not isinstance(inactive, int) or isinstance(inactive, bool) or inactive < 0:
+        raise ConfigError("inactive_account_days must be a non-negative integer (0 disables the check)")
     entra = raw.get("entra") or {}
     depth = entra.get("max_group_depth", 10)
     if not isinstance(depth, int) or depth < 1:
@@ -211,6 +216,7 @@ def parse_config(raw: dict) -> Config:
         auth=AuthConfig(mode, client_id.lower(), cert),
         exception_allowlist=_allowlist(raw.get("exception_allowlist")),
         publish=_publish(raw.get("publish")),
+        inactive_account_days=inactive,
     )
 
 

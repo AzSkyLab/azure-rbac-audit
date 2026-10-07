@@ -9,7 +9,7 @@ NAME="rbac-audit-collector"
 CERT_DIR="$HOME/.config/rbac-audit"          # outside the repo, never committed
 PEM="$CERT_DIR/$NAME.pem"
 GRAPH_API="00000003-0000-0000-c000-000000000000"
-PERMS=(Directory.Read.All RoleManagement.Read.Directory PrivilegedAccess.Read.AzureADGroup AccessReview.Read.All)
+PERMS=(Directory.Read.All RoleManagement.Read.Directory PrivilegedAccess.Read.AzureADGroup AccessReview.Read.All AuditLog.Read.All)
 ROTATE=false
 case "${1:-}" in
   --rotate-cert) ROTATE=true ;;

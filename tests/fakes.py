@@ -6,7 +6,7 @@ from conftest import SUB, fixture
 
 class FakeApi:
     def __init__(self, raw, graph=None, pim_errors=(), descendants=None, descendants_error=None, graph_errors=None,
-                 deleted=None):
+                 deleted=None, users=None, sign_in_forbidden=False):
         self.raw = raw
         self.graph = graph or fixture("graph_principals.json")
         self.pim_errors = set(pim_errors)  # {(kind, scope)}
@@ -17,6 +17,8 @@ class FakeApi:
         self.graph_paths: list[str] = []
         self.entra = fixture("entra.json")
         self.deleted = dict(deleted or {})  # id -> recycle-bin object (soft-deleted)
+        self.users = dict(users or {})      # id -> extra user fields (accountEnabled, signInActivity, ...)
+        self.sign_in_forbidden = sign_in_forbidden  # simulate a token without AuditLog.Read.All
 
     def _rec(self, category, payload, url="fake://"):
         self.raw.save_json(category, payload, method="GET", url=url, status=200)
@@ -75,6 +77,15 @@ class FakeApi:
         for pid, path in paths.items():
             if path.startswith("/directory/deletedItems/"):
                 out[pid] = (200, self.deleted[pid]) if pid in self.deleted else not_found
+            elif path.startswith("/users/") and "accountEnabled" in path:  # account status / sign-in activity
+                if self.sign_in_forbidden and "signInActivity" in path:
+                    out[pid] = (403, {"error": {"code": "Authorization_RequestDenied"}})
+                    continue
+                status, body = self.graph.get(pid, (200, {"id": pid}))  # group members exist even without a fixture
+                user = {"accountEnabled": True, "createdDateTime": "2024-01-01T00:00:00Z", **(body or {}), **self.users.get(pid, {})}
+                if "signInActivity" not in path:
+                    user.pop("signInActivity", None)
+                out[pid] = (status, user if status == 200 else body)
             elif path.startswith("/groups/"):  # existence check of an access review's target group
                 out[pid] = tuple(self.graph.get(pid, not_found))
             else:

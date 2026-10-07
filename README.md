@@ -81,11 +81,21 @@ A review with no reviewers (or ARM `reviewersType: Self`), in any stage, is a se
 
 **Permissions (all read-only).** Application permissions on the collector's app registration (admin consent):
 `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` (covers both group PIM schedule
-APIs), `AccessReview.Read.All`; plus Azure **Reader** at the tenant root management group (ARM/Resource Graph). With
+APIs), `AccessReview.Read.All`, `AuditLog.Read.All` (sign-in dates for the inactive-account check; needs Entra ID P1+); plus
+Azure **Reader** at the tenant root management group (ARM/Resource Graph). With
 `auth.mode: cli` the same names apply as delegated scopes, and the Azure CLI token does **not** carry
 `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup` or `AccessReview.Read.All`. Any 403 is recorded as a
 coverage gap (`coverage_gaps_by_area`, `missing_graph_permissions`); exceptions that depend on it are
 `unverified`/`coverage_gap`, never a pass.
+
+### Inactive and disabled privileged accounts (`inactive_privileged_accounts.csv`, AC-2(3))
+
+Every user with privileged access (a non-standard Azure role held directly, a privileged Entra role, or membership or
+ownership of a privileged group, eligible included) is checked: `disabled` (account disabled), `guest_invitation_pending`,
+`never_signed_in` and `inactive` (latest interactive, non-interactive or successful sign-in older than
+`inactive_account_days`, default 90; accounts newer than that are not judged). One row per user per reason, with every
+privileged access path listed. Without `AuditLog.Read.All` the first two still run and the sign-in checks are a coverage
+gap; `inactive_account_days: 0` turns the check off. Service principals are not covered.
 
 ### Accepted exceptions (`exception_allowlist`)
 
@@ -140,7 +150,7 @@ bash scripts/create-collector-app.sh
 
 It creates the single-tenant app `rbac-audit-collector` and its service principal, generates a self-signed RSA-4096
 certificate valid for 365 days (key and cert combined in `~/.config/rbac-audit/rbac-audit-collector.pem`, mode 600, outside
-the repo; the public `.crt` is uploaded as the app's credential), adds the four Graph application permissions above with admin
+the repo; the public `.crt` is uploaded as the app's credential), adds the five Graph application permissions above with admin
 consent, and assigns **Reader** at the tenant root management group. Copy the printed `auth:` block into
 `config.local.yaml`. It is safe to re-run: each step checks what exists (app, service principal, certificate registered
 on the app by thumbprint, permissions, admin consent, Reader) and only adds what is missing, printing which. Re-run it to

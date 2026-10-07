@@ -1,6 +1,6 @@
 locals {
   # Microsoft Graph application permissions the collector needs; all read-only.
-  graph_roles = ["Directory.Read.All", "RoleManagement.Read.Directory", "PrivilegedAccess.Read.AzureADGroup", "AccessReview.Read.All"]
+  graph_roles = ["Directory.Read.All", "RoleManagement.Read.Directory", "PrivilegedAccess.Read.AzureADGroup", "AccessReview.Read.All", "AuditLog.Read.All"]
   identity    = "${var.name_prefix}-collector"
 
   # The collector config: the repo's config.example.yaml, the caller's overrides, then what this deployment fixes.

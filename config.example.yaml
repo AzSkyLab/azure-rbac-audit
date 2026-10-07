@@ -68,6 +68,10 @@ exception_allowlist: []
 #    scope: "/providers/Microsoft.Management/managementGroups/<mg>"
 #    reason: "MS-PIM service principal; Microsoft PIM requires User Access Administrator to manage assignments"
 
+# Privileged accounts that are disabled, pending guests, never signed in or inactive for this many days
+# (sign-in dates need AuditLog.Read.All). 0 turns the check off.
+inactive_account_days: 90
+
 # Phase 2: privileged groups, PIM for Groups membership and access reviews (Microsoft Graph).
 entra:
   enabled: true
@@ -90,7 +94,8 @@ entra:
 # eligibility and access-review permissions, so phase 2 reports coverage gaps). For full coverage use an app
 # registration with a certificate (no secret in this file; keep the PEM, private key included, at mode 600):
 #   Graph APPLICATION permissions (admin consent): Directory.Read.All, RoleManagement.Read.Directory,
-#   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All; Azure RBAC: Reader at the tenant root management group.
+#   PrivilegedAccess.Read.AzureADGroup, AccessReview.Read.All, AuditLog.Read.All; Azure RBAC: Reader at the tenant root
+#   management group.
 # auth:
 #   mode: certificate                       # cli | certificate | managed_identity (client_id = user-assigned MI)
 #   client_id: "<application (client) id>"

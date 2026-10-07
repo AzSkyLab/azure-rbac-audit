@@ -115,8 +115,8 @@ def summarize(result: RunResult) -> tuple[list[str], list[str]]:
                    "NOT conclusive. See coverage_gaps in manifest.json.")
     p2_areas = sorted(a for a in areas if a != "azure_rbac")
     if p2_areas:
-        err.append("WARNING: PHASE 2 COVERAGE INCOMPLETE (" + ", ".join(p2_areas) + ") - privileged-group, group-membership and "
-                   "access-review results are NOT conclusive; gaps are never reported as passes.")
+        err.append("WARNING: PHASE 2 COVERAGE INCOMPLETE (" + ", ".join(p2_areas) + ") - results in these areas are NOT "
+                   "conclusive; gaps are never reported as passes. See coverage_gaps_by_area in manifest.json.")
     if s.get("missing_graph_permissions"):
         err.append("WARNING: missing Graph permissions on the signed-in token: " + ", ".join(s["missing_graph_permissions"]))
     return out, [line for line in err if line]

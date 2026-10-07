@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
+from . import activity
 from .api import AzureApi, RawStore
 from .config import Config
 from .controls import ALLOWLISTED_COLUMNS, apply_allowlist, direct_user_exceptions, privileged_permanent_exceptions
@@ -167,6 +168,7 @@ CONTROL_MAPPING = {
     "AC-6": ["exceptions_privileged_permanent.csv", "exceptions_entra_privileged_permanent.csv", "exceptions_allowlisted.csv"],
     "AC-6(7)": ["privileged_groups.csv", "access_reviews.csv", "exceptions_access_review.csv"],
     "AC-2(7)": ["privileged_groups.csv", "group_members.csv", "exceptions_privileged_group_standing.csv"],
+    "AC-2(3)": ["inactive_privileged_accounts.csv"],
 }
 
 KNOWN_LIMITATIONS = [
@@ -226,6 +228,15 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
             p2.gaps["phase2"] = [f"phase 2 aborted: {type(e).__name__}: {e}"]
     else:
         p2.gaps["phase2"] = ["phase 2 (privileged groups, PIM for Groups, access reviews) disabled by config"]
+    inactive = activity.ActivityResult()
+    if cfg.inactive_account_days:
+        try:
+            inactive = activity.check_activity(api, rows, p2.entra_roles, p2.members, started, cfg.inactive_account_days)
+        except Exception as e:  # noqa: BLE001 - must not take the rest of the evidence down
+            inactive.gaps.append(f"account activity check aborted: {type(e).__name__}: {e}")
+        p2.missing_permissions |= inactive.missing_permissions
+        for m in inactive.gaps:
+            p2.gaps.setdefault("sign_in_activity", []).append(m)
     for area, msgs in p2.gaps.items():
         for m in msgs:
             g.gap(m, area)
@@ -252,6 +263,7 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
     write_csv(run_dir / "access_review_decisions.csv", DECISION_COLUMNS, p2.decisions)
     write_csv(run_dir / "exceptions_access_review.csv", EXCEPTION_COLUMNS, p2.review_exceptions)
     write_csv(run_dir / "access_reviews_stale.csv", STALE_COLUMNS, p2.stale_reviews)
+    write_csv(run_dir / "inactive_privileged_accounts.csv", activity.COLUMNS, inactive.rows)
 
     summary = {
         "assignments_total": len(rows),
@@ -277,6 +289,8 @@ def collect(cfg: Config, api: AzureApi, raw: RawStore, run_dir: Path, identity: 
         "exceptions_access_review": len(p2.review_exceptions),
         "exceptions_access_review_by_reason": _count(p2.review_exceptions, "reason"),
         "access_reviews_stale": len(p2.stale_reviews),
+        "inactive_privileged_accounts": len({r["principal_id"] for r in inactive.rows}),
+        "inactive_privileged_by_reason": _count(inactive.rows, "reason"),
         "coverage_complete": not g.gaps,
         "coverage_gaps": g.gaps,
         "coverage_gaps_by_area": g.gap_areas,

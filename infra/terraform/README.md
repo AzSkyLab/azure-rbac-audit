@@ -11,7 +11,7 @@ inconclusive (`coverage_complete = false`) or does not publish.
 |---|---|
 | User-assigned managed identity `<prefix>-collector` | the collector's only identity |
 | Reader at the tenant root management group | ARM / Resource Graph reads for every subscription |
-| Graph app roles `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup`, `AccessReview.Read.All` | read-only; the managed-identity equivalent of admin consent |
+| Graph app roles `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedAccess.Read.AzureADGroup`, `AccessReview.Read.All`, `AuditLog.Read.All` | read-only; the managed-identity equivalent of admin consent |
 | Blob container + time-based immutability policy; Storage Blob Data Contributor on that container only | in your existing storage account |
 | AcrPull on your registry (if `acr_id` set) | image pull with the same identity |
 | Log Analytics workspace (unless one is given), Container Apps environment, Container Apps job | weekly by default (`schedule_cron`) |
