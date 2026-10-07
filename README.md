@@ -116,9 +116,10 @@ It creates the single-tenant app `rbac-audit-collector` and its service principa
 certificate valid for 365 days (key and cert combined in `~/.config/rbac-audit/rbac-audit-collector.pem`, mode 600, outside
 the repo; the public `.crt` is uploaded as the app's credential), adds the four Graph application permissions above with admin
 consent, and assigns **Reader** at the tenant root management group. Copy the printed `auth:` block into
-`config.local.yaml`. It is a one-time setup, not an updater: on a re-run `az ad app create` patches the existing app of
-that name, and the script then stops at `az ad sp create` because the service principal already exists. Renew the
-certificate before it expires (`az ad app credential reset --id <client id> --cert @<new .crt> --append`).
+`config.local.yaml`. It is safe to re-run: each step checks what exists (app, service principal, certificate registered
+on the app by thumbprint, permissions, admin consent, Reader) and only adds what is missing, printing which. Re-run it to
+repair a removed permission or role. Before the certificate expires, run it with `--rotate-cert`: a new certificate is
+generated and appended to the app (the old PEM is kept as `*.old` and keeps working until you remove its credential).
 
 ### Minimal lab setup to exercise each path live
 
